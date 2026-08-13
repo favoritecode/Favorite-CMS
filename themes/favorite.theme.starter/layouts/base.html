@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="favorite-renderer" content="backend">
+  <meta name="theme" content="favorite.theme.starter">
+  <title>{{ title }}</title>
+  <style>{{ styles }}</style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  {{ body }}
+  <script>
+    document.querySelectorAll('[data-menu-button]').forEach(function(button){button.addEventListener('click',function(){var navigation=document.getElementById(button.getAttribute('aria-controls'));var expanded=button.getAttribute('aria-expanded')==='true';button.setAttribute('aria-expanded',String(!expanded));if(navigation){navigation.hidden=expanded;}})});
+    document.querySelectorAll('[data-search-form]').forEach(function(form){form.addEventListener('submit',function(event){event.preventDefault();var input=form.querySelector('input[name="q"]');var query=input&&input.value.trim();if(query){window.location.assign('/site/search/'+encodeURIComponent(query));}})});
+  </script>
+</body>
+</html>

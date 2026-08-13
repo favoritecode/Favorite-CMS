@@ -1,0 +1,51 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+coverage/
+htmlcov/
+.coverage
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# Runtime databases, logs, backups, and temporary files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.bak
+*.backup
+*.tmp
+*.temp
+
+# Runtime data (directory markers remain tracked)
+storage/*
+!storage/.gitkeep
+backend/storage/*
+!backend/storage/.gitkeep
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

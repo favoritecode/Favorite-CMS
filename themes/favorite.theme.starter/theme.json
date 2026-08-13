@@ -1,0 +1,16 @@
+{
+  "id": "favorite.theme.starter",
+  "type": "theme",
+  "name": "Favorite Starter",
+  "version": "1.0.0",
+  "description": "A polished, accessible, neutral public website Theme for Favorite CMS.",
+  "author": "Favorite CMS",
+  "license": "MIT",
+  "homepage": "https://favoriteweb.net",
+  "repository": "https://favoriteweb.net",
+  "minimumCoreVersion": "0.1.0",
+  "maximumCoreVersion": "0.1.0",
+  "dependencies": {},
+  "optionalDependencies": {},
+  "permissions": []
+}

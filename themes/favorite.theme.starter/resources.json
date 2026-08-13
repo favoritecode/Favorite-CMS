@@ -1,0 +1,7 @@
+{
+  "templates": ["templates/page.html"],
+  "layouts": ["layouts/base.html"],
+  "components": ["components/header.html", "components/footer.html"],
+  "widgets": [],
+  "assets": ["assets/starter.css"]
+}

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "kind": "reference-message",
+  "title": "Example Plugin",
+  "defaultMessage": "This message is owned by the active first-party Plugin.",
+  "activation": "normal"
+}

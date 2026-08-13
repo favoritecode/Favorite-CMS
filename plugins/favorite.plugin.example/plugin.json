@@ -1,0 +1,16 @@
+{
+  "id": "favorite.plugin.example",
+  "type": "plugin",
+  "name": "Favorite Example Plugin",
+  "version": "1.0.0",
+  "description": "A data-only first-party reference for the supported Plugin lifecycle.",
+  "author": "Favorite CMS",
+  "license": "MIT",
+  "homepage": "https://favoriteweb.net",
+  "repository": "https://favoriteweb.net",
+  "minimumCoreVersion": "0.1.0",
+  "maximumCoreVersion": "0.1.0",
+  "dependencies": {},
+  "optionalDependencies": {},
+  "permissions": ["admin.register", "api.register", "rendering.register", "routing.register", "settings.access"]
+}

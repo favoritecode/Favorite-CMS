@@ -1,0 +1,22 @@
+{
+  "distribution_id": "favorite-cms",
+  "product": "Favorite CMS",
+  "version": "0.1.0",
+  "frontend_model": "source-build",
+  "must_ship": [
+    ".env.production.example", "LICENSE", "README.md", "pyproject.toml",
+    "backend", "frontend/app", "frontend/lib", "frontend/public",
+    "frontend/package.json", "frontend/pnpm-lock.yaml", "frontend/pnpm-workspace.yaml",
+    "frontend/next.config.ts", "frontend/postcss.config.mjs", "frontend/tsconfig.json",
+    "themes/favorite.theme.starter", "plugins/favorite.plugin.example", "plugins/favorite.plugin.seo",
+    "plugins/favorite.plugin.contact", "plugins/favorite.plugin.sitemap", "plugins/favorite.plugin.analytics", "storage/.gitkeep",
+    "docs/distribution.md", "docs/extension-development.md", "docs/runbooks"
+  ],
+  "must_not_ship": [
+    ".git", ".github", ".venv", "node_modules", ".next", "__pycache__", "*.pyc",
+    "backend/tests", "frontend/tests", "playwright.config.ts", "test-results", ".pytest_cache",
+    "*.db", "*.sqlite", "*.sqlite3", "*.log", "coverage", ".coverage", "*.tsbuildinfo",
+    "favorite_cms.egg-info", ".env", ".env.local", ".env.production"
+  ],
+  "optional": ["compatible validated Plugin packages", "additional validated Theme packages"]
+}

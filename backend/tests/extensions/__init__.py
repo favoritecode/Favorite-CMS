@@ -1,0 +1,2 @@
+"""Extension foundation tests."""
+

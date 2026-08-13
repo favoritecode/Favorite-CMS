@@ -1,0 +1,2 @@
+"""Favorite CMS backend package."""
+
