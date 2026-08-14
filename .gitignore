@@ -49,3 +49,5 @@ backend/storage/*
 .vscode/
 .DS_Store
 Thumbs.db
+
+.pnpm-store/
