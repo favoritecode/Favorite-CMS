@@ -3,6 +3,15 @@ export type ApiEnvelope<T> = { success: boolean; data?: T; error?: ApiError; req
 export type AdminModule = { id: string; label: string; destination: string; owner: string };
 
 export const backendUrl = process.env.FAVORITE_API_URL ?? "http://127.0.0.1:8000";
+export const serviceUnavailableError = "The service is unavailable.";
+
+export async function fetchAdminBackend(path: string, init?: RequestInit): Promise<Response | null> {
+  try {
+    return await fetch(`${backendUrl}${path}`, init);
+  } catch {
+    return null;
+  }
+}
 
 export function safeError(payload: unknown): string {
   if (typeof payload === "object" && payload !== null && "error" in payload) {

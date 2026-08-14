@@ -147,3 +147,6 @@ def test_admin_extension_projection_reports_required_and_granted_capabilities(ph
     assert set(seo["permissions"]) == SEO_CAPABILITIES
     assert set(seo["granted_permissions"]) == SEO_CAPABILITIES
     assert seo["compatible"] is True and seo["failure"] is None
+    assert seo["description"]
+    assert isinstance(seo["dependencies"], dict)
+    assert isinstance(seo["optional_dependencies"], dict)

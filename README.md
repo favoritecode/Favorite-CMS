@@ -25,6 +25,21 @@ favorite-cms status
 
 On POSIX systems use `.venv/bin/python`. Repeat `--authorization` for every explicitly selected authorization. Favorite CMS creates no universal administrator role and grants nothing implicitly. Installation is idempotent and a failed installation may be retried without silently replacing an existing initial identity.
 
+Content management requires both the Admin route permission and the ContentEngine action permissions. Select them explicitly during initial installation by repeating `--authorization`, or add only the missing grants to an existing role with this operator command:
+
+```powershell
+.venv\Scripts\python.exe -m backend.cli grant-role --role <content-role> `
+  --authorization admin.content.manage:application.admin.platform:manage:admin_content `
+  --authorization platform.content.create:application.admin.platform:create:content `
+  --authorization platform.content.read:application.admin.platform:read:content `
+  --authorization platform.content.update:application.admin.platform:update:content `
+  --authorization platform.content.delete:application.admin.platform:delete:content `
+  --authorization platform.content.publish:application.admin.platform:publish:content `
+  --authorization platform.content.archive:application.admin.platform:archive:content
+```
+
+`grant-role` is explicit and idempotent. It validates each permission against its registered owner and grants nothing beyond the repeated `--authorization` values.
+
 Build the source-distributed frontend:
 
 ```text

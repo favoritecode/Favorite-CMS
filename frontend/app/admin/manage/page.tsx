@@ -1,2 +1,5 @@
-import { ManagementConsole } from "./management-console";
-export default function ManagementPage() { return <ManagementConsole />; }
+import { redirect } from "next/navigation";
+
+export default function LegacyManagementPage() {
+  redirect("/admin/pages");
+}

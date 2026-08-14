@@ -113,7 +113,7 @@ class FirstPartySuiteRuntime:
             authorization=lambda request: AuthorizationContext("manage", "admin_extensions", request.authentication)))
         self.api_targets.append(target)
         self.admin.register_module(AdminModule(f"{self.plugin_id}.admin", self.plugin_id, self.title,
-            f"/admin/manage#plugin-{slug}", "admin.extensions.manage", "manage", "admin_extensions", 60))
+            "/admin/plugins", "admin.extensions.manage", "manage", "admin_extensions", 60))
 
     def _register_seo(self, context: PluginContext) -> None:
         self._setting("config", {"site_title": "Favorite CMS", "description": "", "canonical_base": "", "robots": "index,follow"}, dict, _seo_config)

@@ -15,6 +15,8 @@ def test_dashboard_is_authenticated_and_permission_filtered() -> None:
         assert client.get("/admin/api/dashboard").status_code == 401
         operator = client.get("/admin/api/dashboard", headers=_login(client)).json()["data"]
         assert operator["content"]["count"] >= 1
+        assert operator["content"]["published"] >= 1
+        assert operator["content"]["draft"] >= 0
         assert isinstance(operator["media"]["count"], int)
         assert isinstance(operator["health"]["readiness"]["ready"], bool)
         assert operator["extensions"]["active_theme"] is None or isinstance(operator["extensions"]["active_theme"], str)

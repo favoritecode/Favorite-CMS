@@ -1,9 +1,10 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { backendUrl, safeError } from "@/lib/admin-api";
+import { fetchAdminBackend, safeError, serviceUnavailableError } from "@/lib/admin-api";
 
 const destinations = new Map([
   ["dashboard", "/admin/api/dashboard"], ["content", "/admin/api/content"], ["media", "/admin/api/media"],
+  ["content-preview", "/admin/api/content/preview"], ["content-capabilities", "/admin/api/content/capabilities"],
   ["settings", "/admin/api/settings"], ["extensions", "/admin/api/extensions"],
   ["diagnostics", "/admin/api/diagnostics"], ["plugin-example", "/api/plugins/example"],
   ["plugin-seo", "/api/plugins/seo/settings"], ["plugin-seo-content", "/api/plugins/seo/content"],
@@ -16,8 +17,9 @@ async function forward(request: NextRequest, area: string) {
   const token = (await cookies()).get("favorite_admin_session")?.value;
   if (!token) return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
   const body = request.method === "GET" ? undefined : await request.text();
-  const response = await fetch(`${backendUrl}${destination}${request.nextUrl.search}`, { method: request.method,
+  const response = await fetchAdminBackend(`${destination}${request.nextUrl.search}`, { method: request.method,
     headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) }, body, cache: "no-store" });
+  if (!response) return NextResponse.json({ error: serviceUnavailableError }, { status: 503 });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) return NextResponse.json({ error: safeError(payload) }, { status: response.status });
   return NextResponse.json(payload);

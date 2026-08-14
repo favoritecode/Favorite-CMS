@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from html import escape
-import re
 from typing import Mapping
 from urllib.parse import quote
 
 from backend.admin.engine import AdminEngine, AdminModule
+from backend.admin.article import article_text, normalize_slug, sanitize_article_html, valid_slug
 from backend.core.container import ServiceContainer
 from backend.core.extensions import ExtensionManager
 from backend.engines.api import APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
@@ -44,11 +44,16 @@ class AdminPlatformEngine:
             action = "view" if area == "diagnostics" else "manage"
             permissions.register(PermissionDefinition(permission_id, OWNER, action, f"admin_{area}"))
         admin = self._service("application.admin", AdminEngine)
+        destinations = {"content": "/admin/pages", "media": "/admin/media",
+                        "settings": "/admin/settings", "extensions": "/admin/themes",
+                        "diagnostics": "/admin/diagnostics"}
         for order, (area, permission_id) in enumerate(PERMISSIONS.items(), 10):
             action = "view" if area == "diagnostics" else "manage"
-            admin.register_module(AdminModule(f"admin.{area}", OWNER, area.title(), f"/admin/manage#{area}", permission_id, action, f"admin_{area}", order))
+            admin.register_module(AdminModule(f"admin.{area}", OWNER, area.title(), destinations[area], permission_id, action, f"admin_{area}", order))
         api = self._service("engine.api", APIEngine)
         self._register(api, "content", "/admin/api/content", ("GET", "POST", "PATCH", "DELETE"), self._content, "content")
+        self._register(api, "content_preview", "/admin/api/content/preview", ("POST",), self._content_preview, "content")
+        self._register(api, "content_capabilities", "/admin/api/content/capabilities", ("GET",), self._content_capabilities, "content")
         self._register(api, "media", "/admin/api/media", ("GET", "POST"), self._media, "media")
         self._register(api, "settings", "/admin/api/settings", ("GET", "PATCH"), self._settings, "settings")
         self._register(api, "extensions", "/admin/api/extensions", ("GET", "POST"), self._extensions, "extensions")
@@ -89,9 +94,15 @@ class AdminPlatformEngine:
             if set(data) != {"id", "title", "data", "action"}: raise APIValidationError("Content request is invalid")
             title, content_data = _content_authoring_input(data["title"], data["data"])
             current = engine.get(str(data["id"]), request.authentication)
+            action = str(data["action"])
+            if action in {"publish", "archive"}:
+                self._service("engine.permissions", PermissionEngine).require(
+                    CONTENT_PERMISSIONS[action], AuthorizationContext(
+                        action, "content", request.authentication, current.content_id,
+                        current.owner_user_id))
+            if action == "publish": self._ensure_unique_slug(current.content_id, content_data["slug"], request.authentication)
             item = engine.update(str(data["id"]), title=title, data=content_data,
                                  metadata=current.metadata, authentication=request.authentication)
-            action = str(data["action"])
             if action == "publish": item = engine.publish(item.content_id, request.authentication)
             elif action == "archive": item = engine.archive(item.content_id, request.authentication)
             elif action != "save": raise APIValidationError("Content action is invalid")
@@ -102,6 +113,27 @@ class AdminPlatformEngine:
         item = engine.create(str(data["type_id"]), title=title, data=content_data, metadata={}, authentication=request.authentication)
         self._index_content(item)
         return _content_value(item)
+    def _content_preview(self, request: APIRequest, data: object) -> object:
+        if not isinstance(data, dict) or set(data) != {"title", "data"}:
+            raise APIValidationError("Content preview request is invalid")
+        title, content_data = _content_authoring_input(data["title"], data["data"])
+        model = {"view": "detail", "title": title, "body": content_data["body"], "published_at": ""}
+        return {"title": title, "data": dict(content_data), "html": _view_markup(model)}
+    def _content_capabilities(self, request: APIRequest, data: object) -> object:
+        permissions = self._service("engine.permissions", PermissionEngine)
+        return {action: permissions.evaluate(permission_id, AuthorizationContext(
+            action, "content", request.authentication)).allowed
+            for action, permission_id in CONTENT_PERMISSIONS.items()}
+    def _ensure_unique_slug(self, content_id: str, slug: object, authentication) -> None:
+        engine = self._service("engine.content", ContentEngine)
+        page = 1
+        while True:
+            items = engine.query(ContentQuery(page=page, page_size=100), authentication)
+            if any(item.content_id != content_id and item.state is not ContentState.ARCHIVED
+                   and item.data.get("slug") == slug for item in items):
+                raise APIValidationError("Content slug is already in use")
+            if len(items) < 100: return
+            page += 1
     def _media(self, request: APIRequest, data: object) -> object:
         engine = self._service("engine.media", MediaEngine)
         if request.route.method == "GET":
@@ -136,16 +168,8 @@ class AdminPlatformEngine:
             success = engine.activate(identifier) if action == "activate" else engine.deactivate(identifier)
             if not success: raise APIValidationError("Extension lifecycle operation failed safely")
         plugins = self._service("engine.plugins", PluginEngine)
-        return [{"id": identifier, "name": manager.manifest(identifier).name,
-                 "version": str(manager.manifest(identifier).version), "type": manager.manifest(identifier).type.value,
-                 "state": manager.state(identifier).value,
-                 "failure": manager.failure(identifier),
-                 "compatible": manager.manifest(identifier).supports_core("0.1.0"),
-                 "active": (manager.manifest(identifier).type.value == "theme" and
-                            self._service("engine.themes", ThemeEngine).active_theme == identifier),
-                 "permissions": list(manager.manifest(identifier).permissions),
-                 "granted_permissions": (list(plugins.granted_permissions(identifier))
-                                           if manager.manifest(identifier).type.value == "plugin" else [])}
+        active_theme = self._service("engine.themes", ThemeEngine).active_theme
+        return [_extension_value(manager, plugins, identifier, active_theme)
                 for identifier in manager.registered()]
     def _diagnostics(self, request: APIRequest, data: object) -> object:
         health = self._service("engine.observability", HealthEngine)
@@ -158,7 +182,10 @@ class AdminPlatformEngine:
             for area, permission_id in PERMISSIONS.items()}
         result: dict[str, object] = {"areas": [area for area in PERMISSIONS if allowed[area]]}
         if allowed["content"]:
-            try: result["content"] = {"count": len(self._service("engine.content", ContentEngine).query(ContentQuery(page_size=100), request.authentication))}
+            try:
+                items = self._service("engine.content", ContentEngine).query(ContentQuery(page_size=100), request.authentication)
+                states = {state.value: sum(item.state is state for item in items) for state in ContentState}
+                result["content"] = {"count": len(items), **states}
             except Exception: result["content"] = {"count": None}
         if allowed["media"]:
             try: result["media"] = {"count": len(self._service("engine.media", MediaEngine).list(request.authentication))}
@@ -195,7 +222,7 @@ class AdminPlatformEngine:
             listing = self._content_listing()
             return {**listing, "view": "home",
                     "title": matched.title if matched is not None else "Welcome to your site",
-                    "body": str(matched.data.get("body", "")) if matched is not None else "Your content will appear here once it is published."}
+                    "body": article_text(str(matched.data.get("body", ""))) if matched is not None else "Your content will appear here once it is published."}
         if matched is not None: return self._detail_model(matched)
         raise RenderResourceNotFound("Public page was not found")
 
@@ -217,13 +244,13 @@ class AdminPlatformEngine:
         try: items = self._service("engine.content", ContentEngine).query(ContentQuery(state=ContentState.PUBLISHED, page_size=50))
         except Exception: items = ()
         return {"view": "listing", "title": "Published content", "items": tuple(
-            {"id": item.content_id, "title": item.title, "summary": str(item.data.get("body", ""))[:180],
+            {"id": item.content_id, "title": item.title, "summary": article_text(str(item.data.get("body", "")))[:180],
              "published_at": item.published_at or ""} for item in items)}
 
     @staticmethod
     def _detail_model(item) -> dict[str, object]:
         return {"view": "detail", "id": item.content_id, "title": item.title,
-                "body": str(item.data.get("body", "")), "published_at": item.published_at or ""}
+                "body": sanitize_article_html(str(item.data.get("body", ""))), "published_at": item.published_at or ""}
 
     def _register_starter_resources(self, rendering: RenderingEngine) -> None:
         themes = self._service("engine.themes", ThemeEngine); theme_id = "favorite.theme.starter"
@@ -248,8 +275,10 @@ class AdminPlatformEngine:
             permissions.register(PermissionDefinition(permission_id, OWNER, action, "media", allow_owner=True, allow_public=action == "read"))
         permissions.register(PermissionDefinition(SETTING_PERMISSIONS["read"], OWNER, "read", "setting"))
         permissions.register(PermissionDefinition(SETTING_PERMISSIONS["write"], OWNER, "update", "setting"))
-        self._service("engine.content", ContentEngine).register_type(ContentType(
-            "page", OWNER, "Page", (ContentField("slug", FieldKind.STRING, True), ContentField("body", FieldKind.STRING, True)), CONTENT_PERMISSIONS))
+        content = self._service("engine.content", ContentEngine)
+        fields = (ContentField("slug", FieldKind.STRING, True), ContentField("body", FieldKind.STRING, True))
+        content.register_type(ContentType("page", OWNER, "Page", fields, CONTENT_PERMISSIONS))
+        content.register_type(ContentType("post", OWNER, "Post", fields, CONTENT_PERMISSIONS))
         self._service("engine.media", MediaEngine).register_access(MediaAccessContract(OWNER, MEDIA_PERMISSIONS))
         self._service("engine.settings", SettingsEngine).register(SettingDefinition(
             "site_title", OWNER, SettingScopeKind.PLATFORM, str, default="Favorite CMS",
@@ -270,7 +299,7 @@ class AdminPlatformEngine:
 
     def _index_content(self, item) -> None:
         self._service("engine.search", SearchEngine).index(SearchDocument(
-            item.content_id, "content", item.title, str(item.data.get("body", "")), resource_reference=f"content:{item.content_id}"))
+            item.content_id, "content", item.title, article_text(str(item.data.get("body", ""))), resource_reference=f"content:{item.content_id}"))
 
 def _any_input(query: Mapping[str, str], body: object) -> object: return body
 def _query_only(query: Mapping[str, str], body: object) -> object:
@@ -285,14 +314,35 @@ def _content_authoring_input(title: object, data: object) -> tuple[str, Mapping[
     values = _mapping(data)
     if set(values) != {"slug", "body"} or not isinstance(values["slug"], str) or not isinstance(values["body"], str):
         raise APIValidationError("Page content fields are invalid")
-    slug, body = values["slug"].strip(), values["body"].strip()
-    if not re.fullmatch(r"[a-z0-9-]{1,120}", slug):
-        raise APIValidationError("Content slug must use lowercase letters, numbers, and hyphens")
-    if not 1 <= len(body) <= 10_000:
-        raise APIValidationError("Content body must contain between 1 and 10,000 characters")
+    slug, body = normalize_slug(values["slug"]), sanitize_article_html(values["body"])
+    if not valid_slug(slug):
+        raise APIValidationError("Content slug must use Unicode letters, numbers, and single hyphens")
+    if not 1 <= len(body) <= 100_000:
+        raise APIValidationError("Content body must contain between 1 and 100,000 characters")
     return title.strip(), {"slug": slug, "body": body}
 def _content_value(item) -> dict[str, object]: return {"id": item.content_id, "type": item.type_id, "title": item.title, "data": dict(item.data), "state": item.state.value}
 def _media_value(item) -> dict[str, object]: return {"id": item.media_id, "name": item.file_name, "mime_type": item.mime_type, "type": item.media_type.value, "size": item.size, "metadata": dict(item.metadata)}
+
+def _extension_value(manager: ExtensionManager, plugins: PluginEngine, identifier: str,
+                     active_theme: str | None) -> dict[str, object]:
+    manifest = manager.manifest(identifier)
+    is_plugin = manifest.type.value == "plugin"
+    return {
+        "id": identifier,
+        "name": manifest.name,
+        "version": str(manifest.version),
+        "description": manifest.description,
+        "author": manifest.author,
+        "type": manifest.type.value,
+        "state": manager.state(identifier).value,
+        "failure": manager.failure(identifier),
+        "compatible": manifest.supports_core("0.1.0"),
+        "active": manifest.type.value == "theme" and active_theme == identifier,
+        "dependencies": dict(manifest.dependencies),
+        "optional_dependencies": dict(manifest.optional_dependencies),
+        "permissions": list(manifest.permissions),
+        "granted_permissions": list(plugins.granted_permissions(identifier)) if is_plugin else [],
+    }
 
 def _search_href(resource_type: str, resource_id: str) -> str:
     return f"/site/content/{quote(resource_id, safe='')}" if resource_type == "content" else "/site/content"
@@ -336,11 +386,11 @@ def _view_markup(model: Mapping[str, object]) -> str:
                 f'<form class="search" data-search-form><label for="site-search">Search this site</label><div><input id="site-search" name="q" value="{query}" required maxlength="500"><button class="button" type="submit">Search</button></div></form></section>'
                 f'<section class="section shell" aria-live="polite"><h2>Results for “{query}”</h2>{results}</section>')
     title = escape(str(model.get("title", "Content")))
-    body = escape(str(model.get("body", "")))
+    body = sanitize_article_html(str(model.get("body", "")))
     published = escape(str(model.get("published_at", ""))[:10])
     meta = f'<p class="meta">Published {published}</p>' if published else ""
     return (f'<article class="article shell"><a class="back-link" href="/site/content">← Back to published content</a><header><p class="eyebrow">Published content</p><h1>{title}</h1>{meta}</header>'
-            f'<div class="prose"><p>{body or "This resource has no body content yet."}</p></div></article>')
+            f'<div class="prose">{body or "<p>This resource has no body content yet.</p>"}</div></article>')
 
 def _cards(value: object, *, limit: int | None = None) -> str:
     items = tuple(value) if isinstance(value, (tuple, list)) else ()

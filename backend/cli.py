@@ -41,6 +41,10 @@ def _parser() -> argparse.ArgumentParser:
                          help="Explicit permission-id:owner:action:resource-type; repeat as required")
     install.add_argument("--password-stdin", action="store_true", help="Read the password from one stdin line")
     install.add_argument("--theme-root", type=Path, default=Path("themes") / STARTER_THEME_ID)
+    grant = commands.add_parser("grant-role", help="Persist explicitly selected permissions for one role")
+    grant.add_argument("--role", required=True, help="Existing application role identifier")
+    grant.add_argument("--authorization", action="append", required=True, type=_authorization,
+                       help="Explicit permission-id:owner:action:resource-type; repeat as required")
     return parser
 
 
@@ -61,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
             except Exception: migration_state = "unavailable (migration history is not initialized)"
             print(f"Installation: {installer.state().value}"); print(f"Pending migrations: {migration_state}")
             return 0
+        if arguments.command == "grant-role":
+            return _grant_role(kernel, arguments)
         return _install(kernel, arguments)
     except Exception as exc:
         print(f"Favorite CMS command failed safely: {type(exc).__name__}", file=sys.stderr)
@@ -88,6 +94,14 @@ def _install(kernel: Kernel, arguments: argparse.Namespace) -> int:
     state = installer.install(InstallationRequest(
         arguments.email, arguments.display_name, password, arguments.role, tuple(authorizations)))
     print(f"Installation: {state.value}")
+    return 0
+
+
+def _grant_role(kernel: Kernel, arguments: argparse.Namespace) -> int:
+    permissions = kernel.container.resolve("engine.permissions", PermissionEngine)
+    for permission_id, owner, _ in arguments.authorization:
+        permissions.grant_role(RoleGrant(arguments.role, permission_id, owner))
+    print(f"Role grants applied: {len(arguments.authorization)}")
     return 0
 
 

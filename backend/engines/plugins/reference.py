@@ -70,7 +70,7 @@ class ReferencePluginRuntime:
             authorization=lambda request: AuthorizationContext("manage", "admin_extensions", request.authentication)))
         admin = context.service("application.admin", PluginAdmin); self._admin = admin
         admin.register_module(AdminModule(
-            "favorite.plugin.example.admin", _ID, "Example Plugin", "/admin/manage#plugin-example",
+            "favorite.plugin.example.admin", _ID, "Example Plugin", "/admin/plugins",
             "admin.extensions.manage", "manage", "admin_extensions", 55))
         rendering = context.service("engine.rendering", PluginRendering)
         self._rendering = rendering
