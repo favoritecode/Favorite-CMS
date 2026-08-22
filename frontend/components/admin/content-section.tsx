@@ -9,8 +9,9 @@ import { manuallyEditedSlug, regeneratedSlug, slugifyTitle, titleDrivenSlug, uni
 import { ArticleEditor } from "./article-editor";
 import { ConfirmDialog, EmptyState, ErrorPanel, fieldClass, LoadingPanel, primaryButton, secondaryButton, StatusBadge, useToast } from "./admin-ui";
 
-type FieldErrors = Partial<Record<"title" | "slug" | "body" | "featuredImage", string>>;
-type EditorState = { mode: "create" | "edit"; item?: ContentItem; title: string; slug: string; slugManual: boolean; body: string; featuredImage: string; errors: FieldErrors };
+type FieldErrors = Partial<Record<"title" | "slug" | "body" | "featuredImage" | "labels", string>>;
+type VisibilityChoice = "draft" | "published" | "unlisted" | "private";
+type EditorState = { mode: "create" | "edit"; item?: ContentItem; title: string; slug: string; slugManual: boolean; body: string; featuredImage: string; labels: string; visibility: VisibilityChoice; errors: FieldErrors };
 type Confirmation = { action: "publish" | "archive" | "delete"; item: ContentItem } | null;
 const noCapabilities: ContentCapabilities = { create: false, read: false, update: false, delete: false, publish: false, archive: false };
 
@@ -27,7 +28,7 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
   const [autosaving, setAutosaving] = useState(false); const [autosaveStatus, setAutosaveStatus] = useState("Draft autosave starts after required fields are complete.");
   const autosaveSequence = useRef(0); const autosaveInFlight = useRef(false); const editorRef = useRef<EditorState | null>(null); editorRef.current = editor;
   const [autosaveRetry, setAutosaveRetry] = useState(0);
-  const draftFingerprint = editor ? JSON.stringify([editor.title, editor.slug, editor.body, editor.featuredImage]) : "";
+  const draftFingerprint = editor ? JSON.stringify([editor.title, editor.slug, editor.body, editor.featuredImage, editor.labels, editor.visibility]) : "";
   const latestFingerprint = useRef(draftFingerprint); latestFingerprint.current = draftFingerprint;
 
   const load = useCallback(async () => {
@@ -50,8 +51,8 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
     return items.filter(item => (stateFilter === "all" || item.state === stateFilter) && (!normalized || item.title.toLowerCase().includes(normalized) || (item.data.slug ?? "").toLowerCase().includes(normalized)));
   }, [items, query, stateFilter]);
 
-  function openCreate() { setAutosaveStatus("Draft autosave starts after required fields are complete."); setEditor({ mode: "create", title: "", slug: "", slugManual: false, body: "<p></p>", featuredImage: "", errors: {} }); }
-  function openEdit(item: ContentItem) { setAutosaveStatus(item.state === "draft" ? "Draft is saved." : "Published changes are saved manually."); setEditor({ mode: "edit", item, title: item.title, slug: item.data.slug ?? "", slugManual: true, body: item.data.body ?? "<p></p>", featuredImage: item.data.featured_image ?? "", errors: {} }); }
+  function openCreate() { setAutosaveStatus("Draft autosave starts after required fields are complete."); setEditor({ mode: "create", title: "", slug: "", slugManual: false, body: "<p></p>", featuredImage: "", labels: "", visibility: "published", errors: {} }); }
+  function openEdit(item: ContentItem) { const visibility: VisibilityChoice = item.state === "draft" ? "draft" : item.data.visibility === "unlisted" ? "unlisted" : item.data.visibility === "private" ? "private" : "published"; setAutosaveStatus(item.state === "draft" ? "Draft is saved." : "Published changes are saved manually."); setEditor({ mode: "edit", item, title: item.title, slug: item.data.slug ?? "", slugManual: true, body: item.data.body ?? "<p></p>", featuredImage: item.data.featured_image ?? "", labels: (item.data.labels ?? []).join(", "), visibility, errors: {} }); }
   function updateTitle(title: string) { setEditor(current => current ? { ...current, title, slug: titleDrivenSlug({ value: current.slug, manual: current.slugManual }, title).value, errors: { ...current.errors, title: undefined, slug: undefined } } : current); }
   function updateSlug(slug: string) { setEditor(current => current ? { ...current, ...manuallyEditedSlug(slug), slug: manuallyEditedSlug(slug).value, slugManual: true, errors: { ...current.errors, slug: undefined } } : current); }
   function regenerate() { setEditor(current => current ? { ...current, slug: regeneratedSlug(current.title).value, slugManual: false, errors: { ...current.errors, slug: undefined } } : current); }
@@ -64,6 +65,7 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
     const hasText = current.body.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim().length > 0;
     if (!hasText && !/<img\s/i.test(current.body)) errors.body = "Add article content before saving.";
     if (current.featuredImage && !validFeaturedImage(current.featuredImage)) errors.featuredImage = "Use an HTTP, HTTPS, or site-relative image URL.";
+    if (contentLabels(current.labels).length > 20 || contentLabels(current.labels).some(label => label.length > 40)) errors.labels = "Use at most 20 labels, up to 40 characters each.";
     if (publishing) {
       const duplicate = allItems.find(item => item.id !== current.item?.id && item.state !== "archived" && item.data.slug === current.slug);
       if (duplicate) errors.slug = `This slug is already used. Try ${uniqueSlugSuggestion(slugifyTitle(current.slug), allItems.map(item => item.data.slug ?? ""))}.`;
@@ -116,10 +118,10 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
     try {
       const body = editor.mode === "create"
         ? { type_id: contentType, title: editor.title, data: editorData(editor) }
-        : { id: editor.item?.id, title: editor.title, data: editorData(editor), action: "save" };
+        : { id: editor.item?.id, title: editor.title, data: editorData(editor), action: editor.item?.state === "published" && editor.visibility === "draft" ? "unpublish" : "save" };
       const value = await adminRequest<ContentItem>("/admin/manage/transport/content", { method: editor.mode === "create" ? "POST" : "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       notify(editor.mode === "create" ? "Draft created." : "Draft saved.");
-      setEditor({ mode: "edit", item: value, title: value.title, slug: value.data.slug ?? "", slugManual: true, body: value.data.body ?? "", featuredImage: value.data.featured_image ?? "", errors: {} }); await load();
+      openEdit(value); await load();
     } catch (reason) { handleEditorError(reason, "Content could not be saved."); }
     finally { setSubmitting(false); }
   }
@@ -150,7 +152,7 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
         const source = action === "publish" && editor?.item?.id === item.id ? { ...item, title: editor.title, data: editorData(editor) } : item;
         const updated = await adminRequest<ContentItem>("/admin/manage/transport/content", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: source.id, title: source.title, data: source.data, action }) });
         notify(action === "publish" ? `${singular[0].toUpperCase()}${singular.slice(1)} published.` : `${singular[0].toUpperCase()}${singular.slice(1)} archived.`);
-        if (editor?.item?.id === item.id) setEditor({ ...editor, item: updated, title: updated.title, slug: updated.data.slug ?? "", body: updated.data.body ?? "", featuredImage: updated.data.featured_image ?? "", errors: {} });
+        if (editor?.item?.id === item.id) openEdit(updated);
       }
       setConfirmation(null); await load();
     } catch (reason) { handleEditorError(reason, "Content action failed."); }
@@ -166,7 +168,7 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
         draft = await adminRequest<ContentItem>("/admin/manage/transport/content", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type_id: contentType, title: editor.title, data: editorData(editor) }) });
       }
       const published = await adminRequest<ContentItem>("/admin/manage/transport/content", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: draft.id, title: editor.title, data: editorData(editor), action: "publish" }) });
-      setEditor({ mode: "edit", item: published, title: published.title, slug: published.data.slug ?? "", slugManual: true, body: published.data.body ?? "", featuredImage: published.data.featured_image ?? "", errors: {} });
+      openEdit(published);
       setAutosaveStatus("Published changes are saved manually."); notify(`${singular[0].toUpperCase()}${singular.slice(1)} published.`); await load();
     } catch (reason) { handleEditorError(reason, "Content could not be published."); }
     finally { setSubmitting(false); }
@@ -179,15 +181,17 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
       <button type="button" className={primaryButton} onClick={openCreate} disabled={!capabilities.create} title={!capabilities.create ? "Create permission is required" : undefined}><Plus className="size-4" />New {singular}</button>
     </div>
     {loading && items.length === 0 ? <LoadingPanel label={`Loading ${plural}`} /> : error ? <ErrorPanel message={error} onRetry={() => void load()} /> : filtered.length === 0 ? <EmptyState title={items.length ? `No matching ${plural}` : `No ${plural} yet`} detail={items.length ? "Change the search or state filter." : `Create your first ${singular} as a private draft.`} action={!items.length && capabilities.create ? <button className={primaryButton} onClick={openCreate}><Plus className="size-4" />Create {singular}</button> : undefined} /> : <ContentTable items={filtered} capabilities={capabilities} onEdit={openEdit} onAction={(action, item) => setConfirmation({ action, item })} />}
-    {editor && <EditorPanel editor={editor} singular={singular} capabilities={capabilities} busy={submitting || autosaving} autosaveStatus={autosaveStatus} onTitle={updateTitle} onSlug={updateSlug} onRegenerate={regenerate} onBody={body => setEditor({ ...editor, body, errors: { ...editor.errors, body: undefined } })} onFeaturedImage={featuredImage => setEditor({ ...editor, featuredImage, errors: { ...editor.errors, featuredImage: undefined } })} onClose={() => !submitting && !autosaving && setEditor(null)} onSave={() => void saveDraft()} onPublish={() => void publishNow()} onPreview={() => void showPreview()} onAction={(action, item) => setConfirmation({ action, item })} />}
+    {editor && <EditorPanel editor={editor} singular={singular} capabilities={capabilities} busy={submitting || autosaving} autosaveStatus={autosaveStatus} onTitle={updateTitle} onSlug={updateSlug} onRegenerate={regenerate} onBody={body => setEditor({ ...editor, body, errors: { ...editor.errors, body: undefined } })} onFeaturedImage={featuredImage => setEditor({ ...editor, featuredImage, errors: { ...editor.errors, featuredImage: undefined } })} onLabels={labels => setEditor({ ...editor, labels, errors: { ...editor.errors, labels: undefined } })} onVisibility={visibility => setEditor({ ...editor, visibility })} onClose={() => !submitting && !autosaving && setEditor(null)} onSave={() => void saveDraft()} onPublish={() => void publishNow()} onPreview={() => void showPreview()} onAction={(action, item) => setConfirmation({ action, item })} />}
     {preview && <PreviewDialog preview={preview} onClose={() => setPreview(null)} />}
     <ConfirmDialog open={confirmation !== null} title={confirmation?.action === "delete" ? `Delete ${singular}?` : confirmation?.action === "publish" ? `Publish this ${singular}?` : `Archive this ${singular}?`} detail={confirmation?.action === "delete" ? "This permanently deletes the content record. This action cannot be undone." : confirmation?.action === "publish" ? "The saved draft and current editor changes will become public." : "This content will leave the published workflow."} confirmLabel={confirmation?.action === "delete" ? "Delete" : confirmation?.action === "publish" ? "Publish" : "Archive"} tone={confirmation?.action === "publish" ? "primary" : "danger"} busy={submitting} onCancel={() => setConfirmation(null)} onConfirm={() => void confirmAction()} />
   </div>;
 }
 
 function editorData(editor: EditorState) {
-  return { slug: editor.slug, body: editor.body, featured_image: editor.featuredImage.trim() };
+  return { slug: editor.slug, body: editor.body, featured_image: editor.featuredImage.trim(), labels: contentLabels(editor.labels), visibility: editor.visibility === "published" ? "public" : editor.visibility === "draft" ? "private" : editor.visibility };
 }
+
+function contentLabels(value: string): string[] { return [...new Map(value.split(",").map(label => label.trim()).filter(Boolean).map(label => [label.toLocaleLowerCase(), label])).values()]; }
 
 function validFeaturedImage(value: string): boolean {
   const reference = value.trim();
@@ -215,21 +219,22 @@ function ContentTable({ items, capabilities, onEdit, onAction }: { items: Conten
 }
 function Action({ title, danger, onClick, children }: { title: string; danger?: boolean; onClick: () => void; children: React.ReactNode }) { return <button type="button" title={title} aria-label={title} onClick={onClick} className={`rounded-md p-2 focus:outline-none focus:ring-2 ${danger ? "text-red-600 hover:bg-red-50 focus:ring-red-600" : "text-slate-500 hover:bg-slate-100 hover:text-sky-700 focus:ring-sky-600"}`}><span className="[&>svg]:size-4">{children}</span></button>; }
 
-function EditorPanel({ editor, singular, capabilities, busy, autosaveStatus, onTitle, onSlug, onRegenerate, onBody, onFeaturedImage, onClose, onSave, onPublish, onPreview, onAction }: { editor: EditorState; singular: string; capabilities: ContentCapabilities; busy: boolean; autosaveStatus: string; onTitle: (value: string) => void; onSlug: (value: string) => void; onRegenerate: () => void; onBody: (value: string) => void; onFeaturedImage: (value: string) => void; onClose: () => void; onSave: () => void; onPublish: () => void; onPreview: () => void; onAction: (action: "publish" | "delete", item: ContentItem) => void }) {
+function EditorPanel({ editor, singular, capabilities, busy, autosaveStatus, onTitle, onSlug, onRegenerate, onBody, onFeaturedImage, onLabels, onVisibility, onClose, onSave, onPublish, onPreview, onAction }: { editor: EditorState; singular: string; capabilities: ContentCapabilities; busy: boolean; autosaveStatus: string; onTitle: (value: string) => void; onSlug: (value: string) => void; onRegenerate: () => void; onBody: (value: string) => void; onFeaturedImage: (value: string) => void; onLabels: (value: string) => void; onVisibility: (value: VisibilityChoice) => void; onClose: () => void; onSave: () => void; onPublish: () => void; onPreview: () => void; onAction: (action: "publish" | "delete", item: ContentItem) => void }) {
   const canSave = editor.mode === "create" ? capabilities.create : capabilities.update;
   const canPublish = editor.item?.state !== "published" && capabilities.create && capabilities.update && capabilities.publish;
   return <div className="fixed inset-0 z-50 bg-slate-950/45 p-0 lg:p-4" role="presentation"><section role="dialog" aria-modal="true" aria-labelledby="editor-title" className="mx-auto flex h-full w-full max-w-[94rem] flex-col bg-slate-100 shadow-2xl lg:rounded-md">
     <header className="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 sm:px-6"><div className="min-w-0"><p className="text-xs font-semibold uppercase text-sky-700">{editor.mode === "create" ? `New ${singular}` : editor.item?.state}</p><h2 id="editor-title" className="truncate font-semibold">{editor.title || `Untitled ${singular}`}</h2></div><div className="flex items-center gap-2"><button type="button" className={secondaryButton} onClick={onPreview} disabled={busy}><Eye className="size-4" />Preview</button><button type="button" title="Close editor" aria-label="Close editor" onClick={onClose} disabled={busy} className="rounded-md p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-600"><X className="size-5" /></button></div></header>
     <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"><div className="mx-auto grid max-w-[86rem] gap-5 xl:grid-cols-[minmax(0,1fr)_19rem]">
       <main className="min-w-0 space-y-4"><label className="grid gap-1.5"><span className="text-sm font-semibold">Title</span><input className={`min-h-14 w-full rounded-md border bg-white px-4 text-xl font-semibold outline-none focus:ring-2 ${editor.errors.title ? "border-red-400 focus:ring-red-100" : "border-slate-300 focus:border-sky-600 focus:ring-sky-100"}`} value={editor.title} onChange={event => onTitle(event.target.value)} maxLength={500} placeholder={`Add ${singular} title`} autoFocus />{editor.errors.title && <span className="text-sm text-red-700" role="alert">{editor.errors.title}</span>}</label><div><ArticleEditor value={editor.body} onChange={onBody} disabled={busy || !canSave} />{editor.errors.body && <p className="mt-1.5 text-sm text-red-700" role="alert">{editor.errors.body}</p>}</div></main>
-      <aside className="space-y-4"><section className="border border-slate-200 bg-white p-4 shadow-sm"><h3 className="text-sm font-semibold">Publishing</h3><dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-3 text-sm"><dt className="text-slate-500">Status</dt><dd className="text-right"><StatusBadge value={editor.item?.state ?? "draft"} /></dd><dt className="text-slate-500">Visibility</dt><dd className="text-right font-medium">{editor.item?.state === "published" ? "Public" : "Private"}</dd></dl><p className="mt-4 text-xs leading-5 text-slate-500" role="status" aria-live="polite">{autosaveStatus}</p><div className="mt-5 grid gap-2">{editor.item?.state === "published" ? <button type="button" className={primaryButton} onClick={onSave} disabled={busy || !canSave}>Save changes</button> : <button type="button" className={primaryButton} onClick={onPublish} disabled={busy || !canPublish}><Send className="size-4" />Publish now</button>}</div></section>
+      <aside className="space-y-4"><section className="border border-slate-200 bg-white p-4 shadow-sm"><h3 className="text-sm font-semibold">Publishing</h3><dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-3 text-sm"><dt className="text-slate-500">Status</dt><dd className="text-right"><StatusBadge value={editor.item?.state ?? "draft"} /></dd></dl><label className="mt-4 grid gap-1.5 text-xs font-medium text-slate-700">Visibility<select className={fieldClass} value={editor.visibility} onChange={event => onVisibility(event.target.value as VisibilityChoice)}><option value="draft">Draft</option><option value="published">Published — public and searchable</option><option value="unlisted">Unlisted — direct link only</option><option value="private">Private — signed-in access only</option></select></label><p className="mt-2 text-xs leading-5 text-slate-500">Draft stays unpublished. Unlisted is hidden from listings, Search and Sitemap. Private is never publicly accessible.</p><p className="mt-4 text-xs leading-5 text-slate-500" role="status" aria-live="polite">{autosaveStatus}</p><div className="mt-5 grid gap-2">{editor.item?.state === "published" || editor.visibility === "draft" ? <button type="button" className={primaryButton} onClick={onSave} disabled={busy || !canSave}>{editor.item?.state === "published" && editor.visibility === "draft" ? "Move to draft" : "Save changes"}</button> : <button type="button" className={primaryButton} onClick={onPublish} disabled={busy || !canPublish}><Send className="size-4" />Publish now</button>}</div></section>
         <section className="border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Slug</h3><button type="button" title="Regenerate slug" aria-label="Regenerate slug" onClick={onRegenerate} className="rounded p-1.5 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-600"><RefreshCw className="size-4" /></button></div><div className="mt-3 flex items-center rounded-md border border-slate-300 focus-within:border-sky-600 focus-within:ring-2 focus-within:ring-sky-100"><span className="pl-3 text-sm text-slate-400">/</span><input aria-label="Slug" className="min-h-10 min-w-0 flex-1 border-0 bg-transparent px-1 py-2 text-sm outline-none" value={editor.slug} onChange={event => onSlug(event.target.value)} maxLength={120} /></div>{editor.errors.slug && <p className="mt-2 text-sm text-red-700" role="alert">{editor.errors.slug}</p>}</section>
         <section className="border border-slate-200 bg-white p-4 shadow-sm"><h3 className="text-sm font-semibold">Featured image</h3><p className="mt-1 text-xs leading-5 text-slate-500">Use an HTTP/HTTPS image URL or a site-relative path. Binary upload is not enabled.</p><label className="mt-3 grid gap-1.5 text-xs font-medium">Image URL<input className={fieldClass} value={editor.featuredImage} onChange={event => onFeaturedImage(event.target.value)} maxLength={1000} placeholder="https://example.com/cover.jpg" /></label>{editor.featuredImage && validFeaturedImage(editor.featuredImage) && <div role="img" aria-label="Featured image preview" className="mt-3 aspect-video w-full rounded-md border border-slate-200 bg-cover bg-center" style={{ backgroundImage: `url(${JSON.stringify(editor.featuredImage)})` }} />}{editor.errors.featuredImage && <p className="mt-2 text-sm text-red-700" role="alert">{editor.errors.featuredImage}</p>}</section>
+        <section className="border border-slate-200 bg-white p-4 shadow-sm"><h3 className="text-sm font-semibold">Labels / tags</h3><p className="mt-1 text-xs leading-5 text-slate-500">Comma-separated labels. Up to 20 labels, 40 characters each.</p><label className="mt-3 grid gap-1.5 text-xs font-medium">Labels<input className={fieldClass} value={editor.labels} onChange={event => onLabels(event.target.value)} maxLength={820} placeholder="news, release, guide" /></label>{editor.errors.labels && <p className="mt-2 text-sm text-red-700" role="alert">{editor.errors.labels}</p>}</section>
         {editor.item && <ContentSeoPanel contentId={editor.item.id} />}
         {editor.item && capabilities.delete && <button type="button" className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-red-300 bg-white px-3 text-sm font-semibold text-red-700 hover:bg-red-50" onClick={() => { const item = editor.item; if (item) onAction("delete", item); }} disabled={busy}><Trash2 className="size-4" />Delete {singular}</button>}
       </aside>
     </div></div>
-    <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-6"><div><button type="button" className={secondaryButton} onClick={onPreview} disabled={busy}><Eye className="size-4" />Preview</button><span className="ml-3 text-xs text-slate-500" role="status">{autosaveStatus}</span></div><div className="flex gap-2">{editor.item?.state === "published" ? <button type="button" className={primaryButton} onClick={onSave} disabled={busy || !canSave}>Save changes</button> : <button type="button" className={primaryButton} onClick={onPublish} disabled={busy || !canPublish}><Send className="size-4" />Publish now</button>}</div></footer>
+    <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-6"><div><button type="button" className={secondaryButton} onClick={onPreview} disabled={busy}><Eye className="size-4" />Preview</button><span className="ml-3 text-xs text-slate-500" role="status">{autosaveStatus}</span></div><div className="flex gap-2">{editor.item?.state === "published" || editor.visibility === "draft" ? <button type="button" className={primaryButton} onClick={onSave} disabled={busy || !canSave}>{editor.item?.state === "published" && editor.visibility === "draft" ? "Move to draft" : "Save changes"}</button> : <button type="button" className={primaryButton} onClick={onPublish} disabled={busy || !canPublish}><Send className="size-4" />Publish now</button>}</div></footer>
   </section></div>;
 }
 
@@ -242,7 +247,7 @@ function ContentSeoPanel({ contentId }: { contentId: string }) {
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     let active = true;
-    adminRequest<{ metadata: SeoMetadata }>(`/admin/manage/transport/plugin-seo-content?content_id=${encodeURIComponent(contentId)}`)
+    adminRequest<{ metadata: SeoMetadata }>(`/admin/manage/transport/content-seo?content_id=${encodeURIComponent(contentId)}`)
       .then(result => { if (active) setMetadata({ ...emptySeo, ...result.metadata }); })
       .catch(() => { if (active) setMetadata(null); });
     return () => { active = false; };
@@ -252,7 +257,7 @@ function ContentSeoPanel({ contentId }: { contentId: string }) {
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setSaving(true);
     try {
-      const result = await adminRequest<{ metadata: SeoMetadata }>("/admin/manage/transport/plugin-seo-content", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ content_id: contentId, metadata }) });
+      const result = await adminRequest<{ metadata: SeoMetadata }>("/admin/manage/transport/content-seo", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ content_id: contentId, metadata }) });
       setMetadata({ ...emptySeo, ...result.metadata }); notify("Content SEO metadata saved.");
     } catch (reason) { notify(reason instanceof Error ? reason.message : "Content SEO metadata could not be saved.", "error"); }
     finally { setSaving(false); }

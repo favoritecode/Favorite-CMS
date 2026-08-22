@@ -32,6 +32,12 @@ class ContentState(StrEnum):
     ARCHIVED = "archived"
 
 
+class ContentVisibility(StrEnum):
+    PUBLIC = "public"
+    UNLISTED = "unlisted"
+    PRIVATE = "private"
+
+
 class FieldKind(StrEnum):
     STRING = "string"
     NUMBER = "number"
@@ -181,7 +187,7 @@ class ContentEngine:
         resource = self._load(content_id)
         self._authorize(self._type(resource.type_id), "read", authentication,
                         resource_id=resource.content_id, owner_user_id=resource.owner_user_id,
-                        public=resource.state is ContentState.PUBLISHED)
+                        public=_direct_public(resource))
         return resource
 
     def query(self, query: ContentQuery, authentication: AuthenticationContext | None = None) -> tuple[ContentResource, ...]:
@@ -196,10 +202,12 @@ class ContentEngine:
             resources = tuple(_from_row(row) for row in session.execute(statement).mappings())
         visible: list[ContentResource] = []
         for resource in resources:
+            if authentication is None and not _listed_public(resource):
+                continue
             decision = self._permissions_required().evaluate(
                 self._type(resource.type_id).permissions["read"],
                 AuthorizationContext("read", "content", authentication, resource.content_id,
-                                     resource.owner_user_id, resource.state is ContentState.PUBLISHED),
+                                     resource.owner_user_id, _listed_public(resource)),
             )
             if decision.allowed: visible.append(resource)
         return tuple(visible)
@@ -236,13 +244,13 @@ class ContentEngine:
         current = self._load(content_id); contract = self._type(current.type_id)
         self._authorize(contract, "read", authentication, resource_id=current.content_id,
                         owner_user_id=current.owner_user_id,
-                        public=current.state is ContentState.PUBLISHED)
+                        public=_direct_public(current))
         return _seo_metadata(current.metadata.get("seo", {}))
 
     def seo_projection(self, content_id: str, *, public_origin: str) -> ContentSeoProjection | None:
         """Project published Content without exposing persistence or draft/private data."""
         current = self._load(content_id)
-        if current.state is not ContentState.PUBLISHED:
+        if not _direct_public(current):
             return None
         origin = _public_origin(public_origin)
         raw = current.metadata.get("seo", {})
@@ -265,6 +273,10 @@ class ContentEngine:
     def archive(self, content_id: str, authentication: AuthenticationContext) -> ContentResource:
         return self._transition(content_id, ContentState.PUBLISHED, ContentState.ARCHIVED, "archive", authentication)
 
+    def unpublish(self, content_id: str, authentication: AuthenticationContext) -> ContentResource:
+        """Return published Content to a draft through the existing publish permission."""
+        return self._transition(content_id, ContentState.PUBLISHED, ContentState.DRAFT, "publish", authentication)
+
     def delete(self, content_id: str, authentication: AuthenticationContext) -> None:
         current = self._load(content_id); contract = self._type(current.type_id)
         self._authorize(contract, "delete", authentication, resource_id=current.content_id,
@@ -281,8 +293,9 @@ class ContentEngine:
         self._validate_data(contract, current.data)
         self._authorize(contract, action, authentication, resource_id=current.content_id,
                         owner_user_id=current.owner_user_id)
-        now = _now(); values: dict[str, str] = {"state": target.value, "updated_at": now}
+        now = _now(); values: dict[str, str | None] = {"state": target.value, "updated_at": now}
         if target is ContentState.PUBLISHED: values["published_at"] = now
+        elif target is ContentState.DRAFT: values["published_at"] = None
         with self._db().transaction() as session:
             session.execute(update(_content).where(_content.c.content_id == current.content_id).values(**values))
         self._invalidate(); return self._load(current.content_id)
@@ -341,6 +354,20 @@ def _from_row(row: Mapping[str, object]) -> ContentResource:
                            ContentState(str(row["state"])), str(row["owner_user_id"]),
                            str(row["created_at"]), str(row["updated_at"]),
                            None if row["published_at"] is None else str(row["published_at"]))
+
+
+def content_visibility(item: ContentResource) -> ContentVisibility:
+    raw = item.data.get("visibility", ContentVisibility.PUBLIC.value)
+    try: return ContentVisibility(str(raw))
+    except ValueError: return ContentVisibility.PRIVATE
+
+
+def _listed_public(item: ContentResource) -> bool:
+    return item.state is ContentState.PUBLISHED and content_visibility(item) is ContentVisibility.PUBLIC
+
+
+def _direct_public(item: ContentResource) -> bool:
+    return item.state is ContentState.PUBLISHED and content_visibility(item) in {ContentVisibility.PUBLIC, ContentVisibility.UNLISTED}
 
 
 def _public_origin(value: str) -> str:

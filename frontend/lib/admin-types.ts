@@ -11,8 +11,9 @@ export type ContentItem = {
   id: string;
   type: string;
   title: string;
-  data: { slug?: string; body?: string; featured_image?: string };
+  data: { slug?: string; body?: string; featured_image?: string; labels?: string[]; visibility?: "public" | "unlisted" | "private" };
   state: "draft" | "published" | "archived" | string;
+  visibility?: "public" | "unlisted" | "private";
 };
 
 export type ContentCapabilities = {
@@ -26,7 +27,7 @@ export type ContentCapabilities = {
 
 export type ContentPreview = {
   title: string;
-  data: { slug: string; body: string; featured_image?: string };
+  data: { slug: string; body: string; featured_image?: string; labels?: string[]; visibility?: string };
   html: string;
 };
 
@@ -37,6 +38,7 @@ export type MediaItem = {
   type: string;
   size: number;
   metadata: Record<string, unknown>;
+  public?: boolean;
 };
 
 export type ExtensionItem = {

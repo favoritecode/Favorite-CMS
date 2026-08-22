@@ -46,7 +46,7 @@ test("content, media, settings, diagnostics, and extension workflows use the rea
   await page.getByRole("textbox", { name: "Slug" }).fill(`browser-${suffix}`);
   await page.getByLabel("Body").fill("Created through UI, HTTP, API, Permission, and Content Engine.");
   await expect(page.getByText("Draft saved automatically.").first()).toBeVisible();
-  await page.getByRole("textbox", { name: "Title" }).fill(`Browser-edited page ${suffix}`);
+  await page.getByRole("textbox", { name: "Title", exact: true }).fill(`Browser-edited page ${suffix}`);
   await expect(page.getByText("Draft saved automatically.").first()).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: "Publish now", exact: true }).first().click();
   await expect(page.getByText("Page published.")).toBeVisible();

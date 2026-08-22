@@ -12,7 +12,8 @@ from backend.admin.article import article_text, normalize_slug, sanitize_article
 from backend.core.container import ServiceContainer
 from backend.core.extensions import ExtensionManager, ManifestValidationError
 from backend.engines.api import APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
-from backend.engines.content import ContentEngine, ContentField, ContentQuery, ContentState, ContentType, FieldKind
+from backend.engines.content import ContentEngine, ContentField, ContentQuery, ContentSeoMetadata, ContentState, ContentVisibility, ContentType, FieldKind
+from backend.engines.content.engine import content_visibility
 from backend.engines.localization import Language, Locale, LocalizationEngine, TranslationResource
 from backend.engines.media import MediaAccessContract, MediaEngine, MediaType
 from backend.engines.permissions import AuthorizationContext, PermissionDefinition, PermissionEngine
@@ -67,6 +68,7 @@ class AdminPlatformEngine:
         self._register(api, "content", "/admin/api/content", ("GET", "POST", "PATCH", "DELETE"), self._content, "content")
         self._register(api, "content_preview", "/admin/api/content/preview", ("POST",), self._content_preview, "content")
         self._register(api, "content_capabilities", "/admin/api/content/capabilities", ("GET",), self._content_capabilities, "content")
+        self._register(api, "content_seo", "/admin/api/content/seo", ("GET", "PATCH"), self._content_seo, "content")
         self._register(api, "media", "/admin/api/media", ("GET", "POST"), self._media, "media")
         self._register(api, "settings", "/admin/api/settings", ("GET", "PATCH"), self._settings, "settings")
         self._register(api, "extensions", "/admin/api/extensions", ("GET", "POST"), self._extensions, "extensions")
@@ -111,15 +113,17 @@ class AdminPlatformEngine:
             title, content_data = _content_authoring_input(data["title"], data["data"])
             current = engine.get(str(data["id"]), request.authentication)
             action = str(data["action"])
-            if action in {"publish", "archive"}:
+            if action in {"publish", "unpublish", "archive"}:
+                permission_action = "publish" if action == "unpublish" else action
                 self._service("engine.permissions", PermissionEngine).require(
-                    CONTENT_PERMISSIONS[action], AuthorizationContext(
-                        action, "content", request.authentication, current.content_id,
+                    CONTENT_PERMISSIONS[permission_action], AuthorizationContext(
+                        permission_action, "content", request.authentication, current.content_id,
                         current.owner_user_id))
             if action == "publish": self._ensure_unique_slug(current.content_id, content_data["slug"], request.authentication)
             item = engine.update(str(data["id"]), title=title, data=content_data,
                                  metadata=current.metadata, authentication=request.authentication)
             if action == "publish": item = engine.publish(item.content_id, request.authentication)
+            elif action == "unpublish": item = engine.unpublish(item.content_id, request.authentication)
             elif action == "archive": item = engine.archive(item.content_id, request.authentication)
             elif action != "save": raise APIValidationError("Content action is invalid")
             self._index_content(item)
@@ -141,6 +145,19 @@ class AdminPlatformEngine:
         return {action: permissions.evaluate(permission_id, AuthorizationContext(
             action, "content", request.authentication)).allowed
             for action, permission_id in CONTENT_PERMISSIONS.items()}
+    def _content_seo(self, request: APIRequest, data: object) -> object:
+        engine = self._service("engine.content", ContentEngine)
+        if request.route.method == "GET":
+            content_id = request.query.get("content_id", "")
+            metadata = engine.get_seo_metadata(content_id, request.authentication)
+        else:
+            if not isinstance(data, dict) or set(data) != {"content_id", "metadata"} or not isinstance(data["metadata"], dict):
+                raise APIValidationError("Content SEO request is invalid")
+            try: metadata = ContentSeoMetadata(**data["metadata"])
+            except TypeError as exc: raise APIValidationError("Content SEO metadata is invalid") from exc
+            engine.set_seo_metadata(str(data["content_id"]), metadata, request.authentication)
+            metadata = engine.get_seo_metadata(str(data["content_id"]), request.authentication)
+        return {"metadata": {key: getattr(metadata, key) for key in metadata.__dataclass_fields__}}
     def _ensure_unique_slug(self, content_id: str, slug: object, authentication) -> None:
         engine = self._service("engine.content", ContentEngine)
         page = 1
@@ -155,13 +172,24 @@ class AdminPlatformEngine:
         engine = self._service("engine.media", MediaEngine)
         if request.route.method == "GET":
             return [_media_value(item) for item in engine.list(request.authentication)]
-        if not isinstance(data, dict) or set(data) != {"file_name", "mime_type", "text"}: raise APIValidationError("Media request is invalid")
+        if (not isinstance(data, dict) or not {"file_name", "mime_type", "text"}.issubset(data)
+                or set(data) - {"file_name", "mime_type", "text", "description", "labels", "visibility"}):
+            raise APIValidationError("Media request is invalid")
         if data["mime_type"] != "text/plain" or not isinstance(data["text"], str):
             raise APIValidationError("Media must be a plain-text document")
         encoded = data["text"].encode("utf-8")
         if not 1 <= len(encoded) <= 10_000:
             raise APIValidationError("Media text must contain between 1 and 10,000 UTF-8 bytes")
-        item = engine.upload(media_type=MediaType.DOCUMENT, file_name=str(data["file_name"]), mime_type="text/plain", data=encoded, metadata={}, public=False, authentication=request.authentication)
+        description = str(data.get("description", "")).strip()
+        if len(description) > 320: raise APIValidationError("Media meta description is too long")
+        raw_labels = data.get("labels", [])
+        if not isinstance(raw_labels, list) or len(raw_labels) > 20 or any(not isinstance(label, str) or not label.strip() or len(label.strip()) > 40 for label in raw_labels):
+            raise APIValidationError("Media labels are invalid")
+        visibility = str(data.get("visibility", "draft"))
+        if visibility not in {"draft", "published", "unlisted", "private"}: raise APIValidationError("Media visibility is invalid")
+        metadata = ({"description": description, "labels": [label.strip() for label in raw_labels], "visibility": visibility}
+                    if any(key in data for key in ("description", "labels", "visibility")) else {})
+        item = engine.upload(media_type=MediaType.DOCUMENT, file_name=str(data["file_name"]), mime_type="text/plain", data=encoded, metadata=metadata, public=visibility in {"published", "unlisted"}, authentication=request.authentication)
         return _media_value(item)
     def _settings(self, request: APIRequest, data: object) -> object:
         engine = self._service("engine.settings", SettingsEngine); scope = SettingScope(SettingScopeKind.PLATFORM, OWNER)
@@ -400,7 +428,8 @@ class AdminPlatformEngine:
         for action, permission_id in EXTENSION_PERMISSIONS.items(): permissions.register(PermissionDefinition(permission_id, OWNER, action, "extension_package"))
         content = self._service("engine.content", ContentEngine)
         fields = (ContentField("slug", FieldKind.STRING, True), ContentField("body", FieldKind.STRING, True),
-                  ContentField("featured_image", FieldKind.STRING, False))
+                  ContentField("featured_image", FieldKind.STRING, False), ContentField("labels", FieldKind.ARRAY, False),
+                  ContentField("visibility", FieldKind.STRING, False))
         content.register_type(ContentType("page", OWNER, "Page", fields, CONTENT_PERMISSIONS))
         content.register_type(ContentType("post", OWNER, "Post", fields, CONTENT_PERMISSIONS))
         self._service("engine.media", MediaEngine).register_access(MediaAccessContract(OWNER, MEDIA_PERMISSIONS))
@@ -435,13 +464,14 @@ class AdminPlatformEngine:
     def _content_visibility(self, resource_id: str) -> ResourceVisibility:
         try:
             item = self._service("engine.content", ContentEngine).get(resource_id)
-            return ResourceVisibility(True, item.state is ContentState.PUBLISHED, item.owner_user_id)
+            return ResourceVisibility(True, item.state is ContentState.PUBLISHED and content_visibility(item) is ContentVisibility.PUBLIC, item.owner_user_id)
         except Exception:
             return ResourceVisibility(False, False, None)
 
     def _index_content(self, item) -> None:
         self._service("engine.search", SearchEngine).index(SearchDocument(
-            item.content_id, "content", item.title, article_text(str(item.data.get("body", ""))), resource_reference=f"content:{item.content_id}"))
+            item.content_id, "content", item.title, article_text(str(item.data.get("body", ""))),
+            labels=tuple(str(label) for label in item.data.get("labels", ())), resource_reference=f"content:{item.content_id}"))
 
 def _any_input(query: Mapping[str, str], body: object) -> object: return body
 def _query_only(query: Mapping[str, str], body: object) -> object:
@@ -454,7 +484,7 @@ def _content_authoring_input(title: object, data: object) -> tuple[str, Mapping[
     if not isinstance(title, str) or not 1 <= len(title.strip()) <= 500:
         raise APIValidationError("Content title must contain between 1 and 500 characters")
     values = _mapping(data)
-    if set(values) - {"slug", "body", "featured_image"} or not {"slug", "body"}.issubset(values) or not isinstance(values["slug"], str) or not isinstance(values["body"], str):
+    if set(values) - {"slug", "body", "featured_image", "labels", "visibility"} or not {"slug", "body"}.issubset(values) or not isinstance(values["slug"], str) or not isinstance(values["body"], str):
         raise APIValidationError("Page content fields are invalid")
     slug, body = normalize_slug(values["slug"]), sanitize_article_html(values["body"])
     if not valid_slug(slug):
@@ -462,7 +492,18 @@ def _content_authoring_input(title: object, data: object) -> tuple[str, Mapping[
     if not 1 <= len(body) <= 100_000:
         raise APIValidationError("Content body must contain between 1 and 100,000 characters")
     featured_image = _featured_image(values.get("featured_image", ""))
-    return title.strip(), {"slug": slug, "body": body, "featured_image": featured_image}
+    raw_labels = values.get("labels", [])
+    if not isinstance(raw_labels, list) or len(raw_labels) > 20 or any(not isinstance(label, str) for label in raw_labels):
+        raise APIValidationError("Content labels are invalid")
+    labels = []
+    for label in raw_labels:
+        normalized = " ".join(label.split()).strip()
+        if not normalized or len(normalized) > 40: raise APIValidationError("Each label must contain between 1 and 40 characters")
+        if normalized.casefold() not in {item.casefold() for item in labels}: labels.append(normalized)
+    visibility = str(values.get("visibility", "public"))
+    if visibility not in {item.value for item in ContentVisibility}: raise APIValidationError("Content visibility is invalid")
+    return title.strip(), {"slug": slug, "body": body, "featured_image": featured_image,
+                           "labels": labels, "visibility": visibility}
 
 
 def _featured_image(value: object) -> str:
@@ -479,7 +520,7 @@ def _featured_image(value: object) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
         raise APIValidationError("Featured image must use an HTTP, HTTPS, or site-relative URL")
     return reference
-def _content_value(item) -> dict[str, object]: return {"id": item.content_id, "type": item.type_id, "title": item.title, "data": dict(item.data), "state": item.state.value}
+def _content_value(item) -> dict[str, object]: return {"id": item.content_id, "type": item.type_id, "title": item.title, "data": dict(item.data), "state": item.state.value, "visibility": content_visibility(item).value}
 def _media_value(item) -> dict[str, object]: return {"id": item.media_id, "name": item.file_name, "mime_type": item.mime_type, "type": item.media_type.value, "size": item.size, "metadata": dict(item.metadata)}
 
 def _extension_value(manager: ExtensionManager, plugins: PluginEngine, identifier: str,
