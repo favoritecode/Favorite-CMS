@@ -126,8 +126,9 @@ class PluginEngine:
         except KeyError as exc:
             raise ManifestValidationError("Plugin package is unavailable") from exc
         from backend.engines.plugins.first_party import load_first_party_runtime
-        self.bind(extension_id, load_first_party_runtime(package, extension_id),
-                  granted_permissions=granted_permissions)
+        try: runtime = load_first_party_runtime(package, extension_id)
+        except ManifestValidationError: runtime = _DeclarativeUploadedRuntime(package, extension_id)
+        self.bind(extension_id, runtime, granted_permissions=granted_permissions)
 
     def install_declarative_package(self, manifest: ExtensionManifest, package: Path) -> None:
         """Register an already validated data-only package; never import package code."""
@@ -250,23 +251,26 @@ class _DeclarativeUploadedRuntime:
             raise ManifestValidationError("Plugin contributions are invalid")
         if not all(isinstance(value[key], list) for key in ("permissions", "entities", "tools", "blocks")) or value["blocks"]:
             raise ManifestValidationError("Plugin contributions are invalid")
-        permissions = context.service("engine.permissions", PluginPermissions)
-        domains = context.service("engine.domains", PluginDomains)
-        tools = context.service("engine.tools", PluginTools)
         try:
-            for item in value["permissions"]:
-                permissions.register(PermissionDefinition(str(item["id"]), self._plugin_id, str(item["action"]), str(item["resource"]),
-                    allow_owner=bool(item.get("allowOwner", False)), allow_public=bool(item.get("allowPublic", False))))
-            for item in value["entities"]:
-                fields = tuple(DomainField(str(field["id"]), DomainFieldKind(str(field["type"])), bool(field.get("required", False)),
-                    int(field["maxLength"]) if "maxLength" in field else None, tuple(str(choice) for choice in field.get("choices", []))) for field in item["fields"])
-                domains.register(DomainEntityContract(str(item["id"]), self._plugin_id, str(item["label"]), fields,
-                    {key: str(permission) for key, permission in item["permissions"].items()}))
-            for item in value["tools"]:
-                fields = tuple(ToolInputField(str(field["id"]), ToolFieldKind(str(field["type"])), bool(field.get("required", False)),
-                    int(field["maxLength"]) if "maxLength" in field else None, tuple(str(choice) for choice in field.get("choices", []))) for field in item["fields"])
-                tools.register(ToolContract(str(item["id"]), self._plugin_id, str(item["label"]), str(item.get("description", "")), fields,
-                    str(item["executePermission"]), str(item.get("worker", "default")), bool(item.get("public", False))))
+            if value["permissions"]:
+                permissions = context.service("engine.permissions", PluginPermissions)
+                for item in value["permissions"]:
+                    permissions.register(PermissionDefinition(str(item["id"]), self._plugin_id, str(item["action"]), str(item["resource"]),
+                        allow_owner=bool(item.get("allowOwner", False)), allow_public=bool(item.get("allowPublic", False))))
+            if value["entities"]:
+                domains = context.service("engine.domains", PluginDomains)
+                for item in value["entities"]:
+                    fields = tuple(DomainField(str(field["id"]), DomainFieldKind(str(field["type"])), bool(field.get("required", False)),
+                        int(field["maxLength"]) if "maxLength" in field else None, tuple(str(choice) for choice in field.get("choices", []))) for field in item["fields"])
+                    domains.register(DomainEntityContract(str(item["id"]), self._plugin_id, str(item["label"]), fields,
+                        {key: str(permission) for key, permission in item["permissions"].items()}))
+            if value["tools"]:
+                tools = context.service("engine.tools", PluginTools)
+                for item in value["tools"]:
+                    fields = tuple(ToolInputField(str(field["id"]), ToolFieldKind(str(field["type"])), bool(field.get("required", False)),
+                        int(field["maxLength"]) if "maxLength" in field else None, tuple(str(choice) for choice in field.get("choices", []))) for field in item["fields"])
+                    tools.register(ToolContract(str(item["id"]), self._plugin_id, str(item["label"]), str(item.get("description", "")), fields,
+                        str(item["executePermission"]), str(item.get("worker", "default")), bool(item.get("public", False))))
         except (KeyError, TypeError, ValueError) as exc: raise ManifestValidationError("Plugin contributions are invalid") from exc
     def activate(self) -> None: pass
     def deactivate(self) -> None: pass

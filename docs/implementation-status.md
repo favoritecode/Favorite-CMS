@@ -1008,6 +1008,14 @@ Status: Implemented on the current development branch; the release version remai
 - Extended uploaded declarative Plugin packages with schema-versioned permission, entity, and Tool contributions. Packages remain inactive by default and executable files remain prohibited.
 - Added per-service capability enforcement to Plugin public facades and owner-scoped cleanup for Permission, Domain, and Tool registrations. Durable records, jobs, and approved lifecycle state remain available for safe reactivation.
 - Added two deterministic migrations: `platform.domain.001` and `platform.tool.001`; together with the existing administration migrations, the current authoritative migration count is 16.
+
+## Isolated OCR/direct-media Worker foundation
+
+- Added an optional separately deployed `favorite_worker` service with authenticated fixed-operation endpoints for Bengali/English image OCR and allowlisted direct HTTPS media retrieval.
+- The Worker enforces bounded inputs, file counts through one-job requests, download size/time/concurrency limits, exact operator host allowlisting, public-IP resolution, redirect rejection, media signature validation, safe filenames, fixed OCR language choices, and a fixed `shell=False` Tesseract invocation.
+- Added inactive-by-default declarative `favorite.plugin.ocr` and `favorite.plugin.direct-media` packages. Both require explicit Plugin capabilities and per-operation Permission grants; neither selects executable modules, commands, providers, environment values, or private services.
+- Added distribution coverage and a developer guide for Tool Workers, declarative Plugins, presentation-only Themes, tests, packaging, and prohibited extension behavior.
+- Public anonymous Tool execution, private CMS Media handoff, arbitrary media-page extraction, platform/DRM bypass, in-flight job recovery, automatic artifact retention, and external OCR/download providers remain intentionally unsupported.
 - No OCR, downloader, commerce, payment, email, or production Worker implementation was added. A real Tool Worker remains a separately deployed, authenticated, resource-limited operator responsibility.
 
 Validation:

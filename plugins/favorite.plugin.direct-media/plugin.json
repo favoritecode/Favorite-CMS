@@ -1,0 +1,7 @@
+{
+  "id": "favorite.plugin.direct-media", "type": "plugin", "name": "Favorite Direct Media Downloader", "version": "1.0.0",
+  "description": "Retrieve an allowlisted direct media file through the isolated Tool Worker.",
+  "author": "Favorite CMS", "license": "MIT", "homepage": "https://favoriteweb.net", "repository": "https://favoriteweb.net",
+  "minimumCoreVersion": "0.1.0", "maximumCoreVersion": "0.1.0", "dependencies": {}, "optionalDependencies": {},
+  "permissions": ["permission.register", "tool.register"]
+}

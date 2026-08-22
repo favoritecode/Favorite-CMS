@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "permissions": [{"id": "favorite.plugin.direct-media.execute", "action": "execute", "resource": "plugin_tool"}],
+  "entities": [],
+  "tools": [{
+    "id": "favorite.tool.direct-media-download", "label": "Direct Media Download",
+    "description": "Retrieve an authorized direct HTTPS media file from an operator-approved host.",
+    "executePermission": "favorite.plugin.direct-media.execute", "worker": "default", "public": false,
+    "fields": [{"id": "url", "type": "url", "required": true, "maxLength": 2000}]
+  }],
+  "blocks": []
+}

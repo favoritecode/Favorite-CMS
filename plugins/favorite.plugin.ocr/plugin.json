@@ -1,0 +1,7 @@
+{
+  "id": "favorite.plugin.ocr", "type": "plugin", "name": "Favorite OCR Tool", "version": "1.0.0",
+  "description": "Extract bounded text from an operator-allowlisted image through the isolated Tool Worker.",
+  "author": "Favorite CMS", "license": "MIT", "homepage": "https://favoriteweb.net", "repository": "https://favoriteweb.net",
+  "minimumCoreVersion": "0.1.0", "maximumCoreVersion": "0.1.0", "dependencies": {}, "optionalDependencies": {},
+  "permissions": ["permission.register", "tool.register"]
+}

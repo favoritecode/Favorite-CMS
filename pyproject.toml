@@ -26,9 +26,10 @@ dev = [
     "pytest>=8.3,<9.0",
     "pytest-cov>=6.0,<7.0",
 ]
+tool-worker = []
 
 [tool.setuptools.packages.find]
-include = ["backend*"]
+include = ["backend*", "favorite_worker*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"

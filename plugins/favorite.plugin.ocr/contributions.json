@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "permissions": [{"id": "favorite.plugin.ocr.execute", "action": "execute", "resource": "plugin_tool"}],
+  "entities": [],
+  "tools": [{
+    "id": "favorite.tool.ocr", "label": "Image OCR", "description": "Extract English or Bengali text from an approved image URL.",
+    "executePermission": "favorite.plugin.ocr.execute", "worker": "default", "public": false,
+    "fields": [
+      {"id": "url", "type": "url", "required": true, "maxLength": 2000},
+      {"id": "language", "type": "select", "required": true, "choices": ["eng", "ben", "eng+ben"]}
+    ]
+  }],
+  "blocks": []
+}

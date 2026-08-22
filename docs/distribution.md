@@ -24,6 +24,8 @@ pnpm prune --prod
 
 The build host needs the declared development build tools. Runtime uses only the pruned production dependencies and `.next` output.
 
+The source distribution also includes the optional `favorite_worker` package, `.env.worker.example`, and the inactive OCR/direct-media Plugin packages. The Worker is a separately configured process and is never started automatically. Its token, spool, Tesseract installation, source-host allowlist, lifecycle supervision, and artifact retention are operator-owned. Worker spool contents and populated environment files are excluded from the archive.
+
 ## Configuration
 
 Copy `.env.production.example` into a secure environment-specific configuration system. Do not place the populated file inside the application package or public directory.
