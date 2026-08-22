@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { backendUrl } from "@/lib/admin-api";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const id = (await context.params).id;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "Media was not found." }, { status: 404 });
   try {
-    const response = await fetch(`${backendUrl}/media/${encodeURIComponent(id)}`, { cache: "no-store" });
+    const token = (await cookies()).get("favorite_admin_session")?.value;
+    const response = await fetch(`${backendUrl}/media/${encodeURIComponent(id)}`, { cache: "no-store",
+      headers: token ? { authorization: `Bearer ${token}` } : undefined });
     if (!response.ok) return NextResponse.json({ error: "Media was not found." }, { status: response.status });
     return new NextResponse(await response.arrayBuffer(), { status: 200, headers: {
       "content-type": response.headers.get("content-type") ?? "application/octet-stream",

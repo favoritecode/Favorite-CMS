@@ -66,12 +66,11 @@ try {
   await visible(page.getByText("Page published."), "Content publication works");
 
   await page.goto(`${frontend}/admin/media`);
-  await page.getByRole("button", { name: "Add document" }).first().click();
-  await page.getByLabel("File name").fill(`clean-${suffix}.txt`);
-  await page.getByLabel("Document content").fill("clean distribution media");
-  await page.getByRole("dialog").getByRole("button", { name: "Add document" }).click();
-  await visible(page.getByText("Text document added to the media library."), "Media Storage contract works");
-  await visible(page.getByRole("row", { name: new RegExp(`clean-${suffix}\\.txt`) }), "Media metadata is listed without a physical path");
+  await page.getByRole("button", { name: "Add media" }).first().click();
+  await page.getByLabel("File").setInputFiles({ name: `clean-${suffix}.txt`, mimeType: "text/plain", buffer: Buffer.from("clean distribution media") });
+  await page.getByRole("dialog").getByRole("button", { name: "Upload media" }).click();
+  await visible(page.getByText("Media uploaded successfully."), "Media Storage contract works");
+  await visible(page.getByRole("heading", { name: `clean-${suffix}.txt` }), "Media metadata is listed without a physical path");
 
   await page.goto(`${frontend}/admin/settings`);
   await page.getByLabel("Site title").fill(`Favorite CMS Clean Candidate ${suffix}`);

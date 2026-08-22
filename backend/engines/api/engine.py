@@ -46,9 +46,13 @@ class APIBinary:
     headers: Mapping[str, str] = MappingProxyType({})
 
     def __post_init__(self) -> None:
-        if not isinstance(self.data, bytes) or not self.data or len(self.data) > 4_000_000:
+        if not isinstance(self.data, bytes) or not self.data or len(self.data) > 10_000_000:
             raise APIValidationError("Binary API response is invalid")
-        if self.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        if self.content_type not in {"image/jpeg", "image/png", "image/webp", "image/gif",
+                                     "video/mp4", "video/webm", "application/pdf", "text/plain",
+                                     "text/csv", "application/json", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                     "application/vnd.openxmlformats-officedocument.presentationml.presentation"}:
             raise APIValidationError("Binary API content type is unsupported")
 
 Validator = Callable[[Mapping[str, str], object], object]

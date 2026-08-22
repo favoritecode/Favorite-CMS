@@ -161,3 +161,15 @@ def test_bounded_image_upload_uses_media_storage_and_safe_binary_delivery() -> N
             "description": "", "labels": [], "visibility": "published",
         })
         assert rejected.status_code == 400
+
+        mp4 = b"\x00\x00\x00\x18ftypisom" + b"bounded-video"
+        video = client.post("/admin/api/media", headers=headers, json={
+            "file_name": "clip.mp4", "mime_type": "video/mp4",
+            "data_base64": base64.b64encode(mp4).decode("ascii"), "description": "Clip",
+            "labels": ["video"], "visibility": "private",
+        })
+        assert video.status_code == 200 and video.json()["data"]["type"] == "video"
+        private_delivery = client.get(f"/media/{video.json()['data']['id']}")
+        assert private_delivery.status_code == 404
+        protected_delivery = client.get(f"/media/{video.json()['data']['id']}", headers=headers)
+        assert protected_delivery.status_code == 200 and protected_delivery.content == mp4

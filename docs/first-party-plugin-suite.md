@@ -1,6 +1,6 @@
 # First-Party Plugin Suite
 
-Phase 22 adds two public boundaries without changing Plugin lifecycle ownership: Favorite SEO consumes Content-owned published SEO projections, and Favorite Contact submits delivery requests to Notification Engine. See `docs/extension-development.md` for package, lifecycle, capability, security, testing, and distribution guidance. External Contact delivery remains pending without an approved adapter. Browser binary Media and authorization presets remain intentionally unavailable.
+Phase 22 adds two public boundaries without changing Plugin lifecycle ownership: Favorite SEO consumes Content-owned published SEO projections, and Favorite Contact submits delivery requests to Notification Engine. See `docs/extension-development.md` for package, lifecycle, capability, security, testing, and distribution guidance. External Contact delivery remains pending without an approved adapter. Media upload is now a separate Media → Storage contract and does not grant Plugins private Media or Storage access. Authorization presets remain intentionally unavailable.
 
 The Phase 15 suite contains four independently discovered, inactive-by-default,
 data-only Plugin packages. Every package uses explicit operator-approved

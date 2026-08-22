@@ -79,7 +79,7 @@ Add a distributable first-party extension only through the explicit `distributio
 
 ## Media boundary
 
-The browser contract remains bounded UTF-8 text/document Media through Media → Storage. Browser binary image upload is not exposed because no approved signature-sniffing, sanitization, or image-processing contract exists. SVG/HTML execution, transformations, and browser deletion remain unsupported.
+The browser Media contract uses Media → Storage for bounded uploads and a Routing/API-owned binary delivery response. Allowed signatures and extensions are checked for JPEG/PNG/WebP/GIF, MP4/WebM, PDF, text/Markdown/CSV/JSON and OOXML documents, with a 10 MB limit and `nosniff` delivery. SVG/HTML/executable uploads, transformations, arbitrary MIME types and browser deletion remain unsupported.
 
 ## Testing and distribution
 

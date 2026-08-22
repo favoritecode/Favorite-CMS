@@ -57,12 +57,11 @@ test("content, media, settings, diagnostics, and extension workflows use the rea
   await expect(page.getByText("Page published.")).toBeVisible();
   await expect(page.getByText("published", { exact: true }).last()).toBeVisible();
   await page.goto("/admin/media");
-  await page.getByRole("button", { name: "Add document" }).first().click();
-  await page.getByLabel("File name").fill("browser-note.txt");
-  await page.getByLabel("Document content").fill("stored through Media and Storage");
-  await page.getByRole("dialog").getByRole("button", { name: "Add document" }).click();
-  await expect(page.getByText("Text document added to the media library.")).toBeVisible();
-  await expect(page.getByRole("row", { name: /browser-note\.txt.*text\/plain.*\d+ B/ })).toBeVisible();
+  await page.getByRole("button", { name: "Add media" }).first().click();
+  await page.getByLabel("File").setInputFiles({ name: "browser-note.txt", mimeType: "text/plain", buffer: Buffer.from("stored through Media and Storage") });
+  await page.getByRole("dialog").getByRole("button", { name: "Upload media" }).click();
+  await expect(page.getByText("Media uploaded successfully.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "browser-note.txt" })).toBeVisible();
   await page.goto("/admin/settings");
   await page.getByLabel("Site title").fill("Favorite Browser CMS");
   await page.getByRole("button", { name: "Save changes" }).click();

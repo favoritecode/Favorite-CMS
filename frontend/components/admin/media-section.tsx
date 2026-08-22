@@ -1,66 +1,36 @@
 "use client";
-
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { Clipboard, FileText, Plus, Search, Upload, X } from "lucide-react";
 import { adminRequest, isAuthenticationError } from "@/lib/admin-client";
 import type { MediaItem } from "@/lib/admin-types";
 import { EmptyState, ErrorPanel, fieldClass, LoadingPanel, primaryButton, secondaryButton, useToast } from "./admin-ui";
 
+const accepted = "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,application/pdf,text/plain,text/csv,application/json,.md,.docx,.xlsx,.pptx";
 export function MediaSection() {
-  const router = useRouter();
-  const { notify } = useToast();
-  const [items, setItems] = useState<MediaItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
-    try { setItems(await adminRequest<MediaItem[]>("/admin/manage/transport/media")); }
-    catch (reason) {
-      if (isAuthenticationError(reason)) { router.replace("/admin/login"); return; }
-      setError(reason instanceof Error ? reason.message : "Media could not be loaded.");
-    } finally { setLoading(false); }
-  }, [router]);
+  const router = useRouter(); const { notify } = useToast();
+  const [items, setItems] = useState<MediaItem[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
+  const [query, setQuery] = useState(""); const [typeFilter, setTypeFilter] = useState("all"); const [visibilityFilter, setVisibilityFilter] = useState("all");
+  const [uploadOpen, setUploadOpen] = useState(false); const [submitting, setSubmitting] = useState(false);
+  const load = useCallback(async () => { setLoading(true); setError(""); try { setItems(await adminRequest<MediaItem[]>("/admin/manage/transport/media")); } catch (reason) { if (isAuthenticationError(reason)) { router.replace("/admin/login"); return; } setError(reason instanceof Error ? reason.message : "Media could not be loaded."); } finally { setLoading(false); } }, [router]);
   useEffect(() => { void load(); }, [load]);
-
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return normalized ? items.filter(item => item.name.toLowerCase().includes(normalized) || item.mime_type.toLowerCase().includes(normalized)) : items;
-  }, [items, query]);
-
+  const filtered = useMemo(() => { const term = query.trim().toLowerCase(); return items.filter(item => { const visibility = String(item.metadata.visibility ?? "private"); const searchable = `${item.name} ${item.mime_type} ${String(item.metadata.description ?? "")} ${Array.isArray(item.metadata.labels) ? item.metadata.labels.join(" ") : ""}`.toLowerCase(); return (typeFilter === "all" || item.type === typeFilter) && (visibilityFilter === "all" || visibility === visibilityFilter) && (!term || searchable.includes(term)); }); }, [items, query, typeFilter, visibilityFilter]);
   async function upload(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setSubmitting(true);
-    const form = new FormData(event.currentTarget);
-    try {
-      const labels = String(form.get("labels") ?? "").split(",").map(label => label.trim()).filter(Boolean);
-      await adminRequest<MediaItem>("/admin/manage/transport/media", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file_name: form.get("name"), mime_type: "text/plain", text: form.get("text"), description: form.get("description"), labels, visibility: form.get("visibility") }) });
-      notify("Text document added to the media library."); setUploadOpen(false); await load();
-    } catch (reason) { notify(reason instanceof Error ? reason.message : "Media upload failed.", "error"); }
-    finally { setSubmitting(false); }
+    event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get("file");
+    if (!(file instanceof File) || !file.size) { notify("Choose a media file.", "error"); return; }
+    if (file.size > 10_000_000) { notify("Media file must be no larger than 10 MB.", "error"); return; }
+    setSubmitting(true);
+    try { const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ""; for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)); const labels = String(form.get("labels") ?? "").split(",").map(label => label.trim()).filter(Boolean); await adminRequest<MediaItem>("/admin/manage/transport/media", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file_name: file.name, mime_type: file.type || mimeFromName(file.name), data_base64: btoa(binary), description: form.get("description"), labels, visibility: form.get("visibility") }) }); notify("Media uploaded successfully."); setUploadOpen(false); await load(); }
+    catch (reason) { notify(reason instanceof Error ? reason.message : "Media upload failed.", "error"); } finally { setSubmitting(false); }
   }
-
-  async function copyReference(item: MediaItem) {
-    try { await navigator.clipboard.writeText(item.id); notify("Media reference copied."); }
-    catch { notify("The media reference could not be copied.", "error"); }
-  }
-
+  async function copy(item: MediaItem) { try { await navigator.clipboard.writeText(`/media/${item.id}`); notify("Media URL copied."); } catch { notify("The media URL could not be copied.", "error"); } }
   return <div className="space-y-5">
-    <div className="flex flex-col gap-3 border-y border-slate-200 bg-white p-4 sm:flex-row sm:items-center">
-      <label className="relative min-w-0 flex-1"><span className="sr-only">Search media</span><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input className={`${fieldClass} pl-9`} value={query} onChange={event => setQuery(event.target.value)} placeholder="Search media library" /></label>
-      <button type="button" className={primaryButton} onClick={() => setUploadOpen(true)}><Upload className="size-4" />Add document</button>
-    </div>
-
-    {loading && items.length === 0 ? <LoadingPanel label="Loading media library" /> : error ? <ErrorPanel message={error} onRetry={() => void load()} /> : filtered.length === 0 ? <EmptyState title={items.length ? "No matching media" : "Media library is empty"} detail={items.length ? "Try a different search term." : "The current Media contract accepts bounded UTF-8 text documents."} action={!items.length && <button className={primaryButton} onClick={() => setUploadOpen(true)}><Plus className="size-4" />Add document</button>} /> : <div className="overflow-hidden border border-slate-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[40rem] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-4 py-3 font-semibold">Document</th><th className="px-4 py-3 font-semibold">Type</th><th className="px-4 py-3 font-semibold">Size</th><th className="px-4 py-3 text-right font-semibold">Reference</th></tr></thead><tbody className="divide-y divide-slate-100">{filtered.map(item => <tr key={item.id} className="hover:bg-slate-50"><td className="px-4 py-3"><div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-md bg-sky-50 text-sky-700"><FileText className="size-5" /></span><div className="min-w-0"><p className="max-w-md truncate font-semibold">{item.name}</p><p className="mt-0.5 font-mono text-xs text-slate-400">{item.id}</p></div></div></td><td className="px-4 py-3"><p className="font-medium capitalize">{item.type}</p><p className="text-xs text-slate-500">{item.mime_type}</p></td><td className="px-4 py-3 text-slate-600">{formatBytes(item.size)}</td><td className="px-4 py-3 text-right"><button type="button" title="Copy media reference" aria-label={`Copy reference for ${item.name}`} onClick={() => void copyReference(item)} className={secondaryButton}><Clipboard className="size-4" />Copy ID</button></td></tr>)}</tbody></table></div></div>}
-
-    {uploadOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4" role="presentation"><section role="dialog" aria-modal="true" aria-labelledby="upload-title" className="max-h-[94vh] w-full max-w-xl overflow-y-auto rounded-md bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-slate-200 px-5 py-4"><div><p className="text-xs font-semibold uppercase text-sky-700">Media library</p><h2 id="upload-title" className="font-semibold">Add text document</h2></div><button type="button" title="Close" aria-label="Close upload" onClick={() => !submitting && setUploadOpen(false)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-600"><X className="size-5" /></button></div><form className="grid gap-5 p-5" onSubmit={upload}><label className="grid gap-2 text-sm font-medium">File name<input name="name" className={fieldClass} required maxLength={255} pattern="[A-Za-z0-9][A-Za-z0-9._ -]*" placeholder="editorial-notes.txt" /><span className="text-xs font-normal text-slate-500">A safe file name without folders or paths.</span></label><label className="grid gap-2 text-sm font-medium">Meta description<textarea name="description" className={`${fieldClass} min-h-20 resize-y`} maxLength={320} placeholder="Short description for this media item" /></label><label className="grid gap-2 text-sm font-medium">Labels / tags<input name="labels" className={fieldClass} maxLength={820} placeholder="document, guide, internal" /><span className="text-xs font-normal text-slate-500">Comma-separated; maximum 20 labels.</span></label><label className="grid gap-2 text-sm font-medium">Visibility<select name="visibility" className={fieldClass} defaultValue="draft"><option value="draft">Draft</option><option value="published">Published</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label><label className="grid gap-2 text-sm font-medium">Document content<textarea name="text" className={`${fieldClass} min-h-56 resize-y font-mono leading-6`} required maxLength={10000} placeholder="Plain UTF-8 text" /><span className="text-xs font-normal text-slate-500">Maximum 10,000 UTF-8 bytes. Binary image/video upload is not enabled.</span></label><div className="flex justify-end gap-2"><button type="button" className={secondaryButton} onClick={() => setUploadOpen(false)} disabled={submitting}>Cancel</button><button type="submit" className={primaryButton} disabled={submitting}><Upload className="size-4" />{submitting ? "Adding document" : "Add document"}</button></div></form></section></div>}
+    <div className="grid gap-3 border-y border-slate-200 bg-white p-4 lg:grid-cols-[minmax(0,1fr)_11rem_11rem_auto]"><label className="relative"><span className="sr-only">Search media</span><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input className={`${fieldClass} pl-9`} value={query} onChange={event => setQuery(event.target.value)} placeholder="Search name, description or labels" /></label><label><span className="sr-only">Filter media type</span><select className={fieldClass} value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">All media types</option><option value="image">Images</option><option value="video">Videos</option><option value="document">Documents</option></select></label><label><span className="sr-only">Filter visibility</span><select className={fieldClass} value={visibilityFilter} onChange={event => setVisibilityFilter(event.target.value)}><option value="all">All visibility</option><option value="draft">Draft</option><option value="published">Published</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label><button type="button" className={primaryButton} onClick={() => setUploadOpen(true)}><Upload className="size-4" />Add media</button></div>
+    {loading && !items.length ? <LoadingPanel label="Loading media library" /> : error ? <ErrorPanel message={error} onRetry={() => void load()} /> : !filtered.length ? <EmptyState title={items.length ? "No matching media" : "Media library is empty"} detail={items.length ? "Change the search or filters." : "Upload an image, video, PDF, text or Office document."} action={!items.length && <button className={primaryButton} onClick={() => setUploadOpen(true)}><Plus className="size-4" />Add media</button>} /> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{filtered.map(item => <MediaCard key={item.id} item={item} onCopy={() => void copy(item)} />)}</div>}
+    {uploadOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4"><section role="dialog" aria-modal="true" aria-labelledby="upload-title" className="max-h-[94vh] w-full max-w-xl overflow-y-auto rounded-md bg-white shadow-2xl"><header className="flex items-center justify-between border-b border-slate-200 px-5 py-4"><div><p className="text-xs font-semibold uppercase text-sky-700">Media library</p><h2 id="upload-title" className="font-semibold">Upload media</h2></div><button type="button" aria-label="Close upload" onClick={() => !submitting && setUploadOpen(false)} className="rounded-md p-2 hover:bg-slate-100"><X className="size-5" /></button></header><form className="grid gap-5 p-5" onSubmit={upload}><label className="grid gap-2 text-sm font-medium">File<input name="file" type="file" accept={accepted} className={fieldClass} required /><span className="text-xs font-normal text-slate-500">JPEG, PNG, WebP, GIF, MP4, WebM, PDF, TXT, Markdown, CSV, JSON, DOCX, XLSX or PPTX. Maximum 10 MB.</span></label><label className="grid gap-2 text-sm font-medium">Meta description<textarea name="description" className={`${fieldClass} min-h-24 resize-y`} maxLength={320} /></label><label className="grid gap-2 text-sm font-medium">Labels / tags<input name="labels" className={fieldClass} maxLength={820} placeholder="photo, video, document" /></label><label className="grid gap-2 text-sm font-medium">Visibility<select name="visibility" className={fieldClass} defaultValue="private"><option value="draft">Draft</option><option value="published">Published</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label><div className="flex justify-end gap-2"><button type="button" className={secondaryButton} onClick={() => setUploadOpen(false)} disabled={submitting}>Cancel</button><button className={primaryButton} disabled={submitting}><Upload className="size-4" />{submitting ? "Uploading" : "Upload media"}</button></div></form></section></div>}
   </div>;
 }
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  return `${(value / 1024).toFixed(1)} KB`;
-}
+function MediaCard({ item, onCopy }: { item: MediaItem; onCopy: () => void }) { const url = `/media/${item.id}`; const visibility = String(item.metadata.visibility ?? "private"); return <article className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm"><div className="relative grid aspect-video place-items-center bg-slate-100">{item.type === "image" ? <Image src={url} alt={String(item.metadata.description ?? item.name)} fill unoptimized className="object-cover" /> : item.type === "video" ? <video src={url} controls preload="metadata" className="h-full w-full bg-black object-contain" /> : <FileText className="size-12 text-slate-400" />}</div><div className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold">{item.name}</h3><p className="text-xs text-slate-500">{item.mime_type} · {formatBytes(item.size)}</p></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs capitalize">{visibility}</span></div>{item.metadata.description ? <p className="line-clamp-2 text-sm text-slate-600">{String(item.metadata.description)}</p> : null}<div className="flex gap-2"><a href={url} target="_blank" rel="noreferrer" className={secondaryButton}>Open</a><button type="button" className={secondaryButton} onClick={onCopy}><Clipboard className="size-4" />Copy URL</button></div></div></article>; }
+function formatBytes(value: number): string { if (value < 1024) return `${value} B`; if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`; return `${(value / 1024 ** 2).toFixed(1)} MB`; }
+function mimeFromName(name: string): string { const ext = name.toLowerCase().split(".").pop(); return ({ md: "text/plain", csv: "text/csv", json: "application/json", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation" } as Record<string, string>)[ext ?? ""] ?? "application/octet-stream"; }

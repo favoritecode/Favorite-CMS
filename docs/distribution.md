@@ -135,12 +135,12 @@ TLS termination, proxy software, process supervision, and hosting vendor are env
 
 1. Open `/admin/login` on the Next.js frontend and sign in with the identity created by `favorite-cms install`.
 2. The dashboard and navigation show only explicitly authorized modules.
-3. Use `/admin/manage` to create draft Content, publish it, store supported text/document Media, edit the site-title Setting, review Plugin capabilities, and inspect Theme/Health status.
+3. Use `/admin/manage` to create draft Content, publish it, upload supported Media, edit the site-title Setting, review Plugin capabilities, and inspect Theme/Health status.
 4. Visit the FastAPI public CMS at `/site/welcome`; published Content appears under `/site/content` and Search is available under `/site/search/<query>`.
 5. Bundled Plugins are inactive by default. Review the displayed version and capabilities before explicitly activating each Plugin. Plugin state stored through Settings survives deactivation/reactivation; route and presentation contributions are removed while inactive.
 6. Sign out from Admin and verify protected pages require authentication again.
 
-The current browser Media surface stores bounded UTF-8 text/document resources and shows safe metadata through Media → Storage. Binary image upload, transformation, and browser Media deletion are not part of the `0.1.0` public Admin contract. The package includes one production Starter Theme; invalid-package rejection and previous-theme preservation are Engine-level lifecycle guarantees, not a deliberately broken package exposed to operators.
+The browser Media surface stores bounded images, videos and documents through Media → Storage and never exposes physical paths. It accepts signature-validated JPEG/PNG/WebP/GIF, MP4/WebM, PDF, text/Markdown/CSV/JSON and OOXML DOCX/XLSX/PPTX up to 10 MB. Images and videos can be previewed; documents are served as downloads with `nosniff`. SVG, executable formats, transformations and browser deletion remain unsupported. The package includes one production Starter Theme; invalid-package rejection and previous-theme preservation are Engine-level lifecycle guarantees.
 
 ## Operational validation
 

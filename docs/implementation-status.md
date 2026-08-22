@@ -974,6 +974,12 @@ Closure result:
 
 External limitations remain explicit: live PostgreSQL, PostgreSQL-native backup/restore, external durable Storage, external Notification delivery, reverse proxy, TLS termination, and production process supervision were not executed or remain operator/provider-owned. Binary Media and authorization presets remain intentionally unsupported/deferred.
 
+## Post-release Media authoring improvement
+
+- Added a bounded Media-owned upload contract for signature-validated images, videos, PDFs, text/structured documents, and OOXML documents up to 10 MB while retaining Storage ownership and hiding physical paths.
+- Added authenticated preview for private Admin media, public delivery only for explicitly published/unlisted media, `nosniff` responses, document download disposition, image/video previews, prior-upload listing, and name/description/label/type/visibility filtering.
+- SVG, executable/unknown formats, image/video transformations, and browser deletion remain unsupported.
+
 Architecture review: PASS. No ownership change, duplicate infrastructure, automatic migration/installation, hidden authorization, universal administrator, marketplace, remote execution, business feature, or Phase 27 functionality was introduced.
 
 Phase 26 gate: PASS. Favorite CMS 0.1.0 is release ready within the documented operator/provider boundaries. Phase 27 was not started.
