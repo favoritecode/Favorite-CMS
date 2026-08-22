@@ -11,7 +11,7 @@ from backend.admin.engine import AdminEngine, AdminModule
 from backend.admin.article import article_text, normalize_slug, sanitize_article_html, valid_slug
 from backend.core.container import ServiceContainer
 from backend.core.extensions import ExtensionManager, ManifestValidationError
-from backend.engines.api import APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
+from backend.engines.api import APIBinary, APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
 from backend.engines.content import ContentEngine, ContentField, ContentQuery, ContentSeoMetadata, ContentState, ContentVisibility, ContentType, FieldKind
 from backend.engines.content.engine import content_visibility
 from backend.engines.localization import Language, Locale, LocalizationEngine, TranslationResource
@@ -70,6 +70,8 @@ class AdminPlatformEngine:
         self._register(api, "content_capabilities", "/admin/api/content/capabilities", ("GET",), self._content_capabilities, "content")
         self._register(api, "content_seo", "/admin/api/content/seo", ("GET", "PATCH"), self._content_seo, "content")
         self._register(api, "media", "/admin/api/media", ("GET", "POST"), self._media, "media")
+        api.register(RouteDefinition("platform.media.delivery", OWNER, RouteType.API, "/media/{media_id}", ("GET",), "platform.media.delivery"),
+                     APIOperation("platform.media.delivery", OWNER, _query_only, self._media_delivery, lambda value: value))
         self._register(api, "settings", "/admin/api/settings", ("GET", "PATCH"), self._settings, "settings")
         self._register(api, "extensions", "/admin/api/extensions", ("GET", "POST"), self._extensions, "extensions")
         self._register(api, "users", "/admin/api/users", ("GET", "POST", "PATCH"), self._users, "users")
@@ -172,14 +174,19 @@ class AdminPlatformEngine:
         engine = self._service("engine.media", MediaEngine)
         if request.route.method == "GET":
             return [_media_value(item) for item in engine.list(request.authentication)]
-        if (not isinstance(data, dict) or not {"file_name", "mime_type", "text"}.issubset(data)
-                or set(data) - {"file_name", "mime_type", "text", "description", "labels", "visibility"}):
+        if (not isinstance(data, dict) or not {"file_name", "mime_type"}.issubset(data)
+                or set(data) - {"file_name", "mime_type", "text", "data_base64", "description", "labels", "visibility"}
+                or ("text" in data) == ("data_base64" in data)):
             raise APIValidationError("Media request is invalid")
-        if data["mime_type"] != "text/plain" or not isinstance(data["text"], str):
-            raise APIValidationError("Media must be a plain-text document")
-        encoded = data["text"].encode("utf-8")
-        if not 1 <= len(encoded) <= 10_000:
-            raise APIValidationError("Media text must contain between 1 and 10,000 UTF-8 bytes")
+        if "text" in data:
+            if data["mime_type"] != "text/plain" or not isinstance(data["text"], str):
+                raise APIValidationError("Media must be a plain-text document")
+            encoded = data["text"].encode("utf-8")
+            if not 1 <= len(encoded) <= 10_000: raise APIValidationError("Media text must contain between 1 and 10,000 UTF-8 bytes")
+            media_type, mime_type = MediaType.DOCUMENT, "text/plain"
+        else:
+            encoded, mime_type = _image_data(data["data_base64"], data["mime_type"], data["file_name"])
+            media_type = MediaType.IMAGE
         description = str(data.get("description", "")).strip()
         if len(description) > 320: raise APIValidationError("Media meta description is too long")
         raw_labels = data.get("labels", [])
@@ -189,8 +196,17 @@ class AdminPlatformEngine:
         if visibility not in {"draft", "published", "unlisted", "private"}: raise APIValidationError("Media visibility is invalid")
         metadata = ({"description": description, "labels": [label.strip() for label in raw_labels], "visibility": visibility}
                     if any(key in data for key in ("description", "labels", "visibility")) else {})
-        item = engine.upload(media_type=MediaType.DOCUMENT, file_name=str(data["file_name"]), mime_type="text/plain", data=encoded, metadata=metadata, public=visibility in {"published", "unlisted"}, authentication=request.authentication)
+        item = engine.upload(media_type=media_type, file_name=str(data["file_name"]), mime_type=mime_type, data=encoded, metadata=metadata, public=visibility in {"published", "unlisted"}, authentication=request.authentication)
         return _media_value(item)
+    def _media_delivery(self, request: APIRequest, data: object) -> APIBinary:
+        engine = self._service("engine.media", MediaEngine)
+        try:
+            item = engine.get(request.route.parameters["media_id"], request.authentication)
+            if item.media_type is not MediaType.IMAGE: raise APIResourceNotFound("Media is unavailable")
+            payload = engine.retrieve(item.media_id, request.authentication)
+        except APIResourceNotFound: raise
+        except Exception as exc: raise APIResourceNotFound("Media is unavailable") from exc
+        return APIBinary(payload, item.mime_type, {"cache-control": "public, max-age=3600"})
     def _settings(self, request: APIRequest, data: object) -> object:
         engine = self._service("engine.settings", SettingsEngine); scope = SettingScope(SettingScopeKind.PLATFORM, OWNER)
         if request.route.method == "PATCH":
@@ -520,6 +536,22 @@ def _featured_image(value: object) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
         raise APIValidationError("Featured image must use an HTTP, HTTPS, or site-relative URL")
     return reference
+
+def _image_data(value: object, mime_value: object, name_value: object) -> tuple[bytes, str]:
+    if not isinstance(value, str) or not isinstance(mime_value, str) or not isinstance(name_value, str):
+        raise APIValidationError("Image upload is invalid")
+    try: payload = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error) as exc: raise APIValidationError("Image upload encoding is invalid") from exc
+    if not 1 <= len(payload) <= 4_000_000: raise APIValidationError("Image must be no larger than 4 MB")
+    signatures = {
+        "image/jpeg": (payload.startswith(b"\xff\xd8\xff"), (".jpg", ".jpeg")),
+        "image/png": (payload.startswith(b"\x89PNG\r\n\x1a\n"), (".png",)),
+        "image/webp": (len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP", (".webp",)),
+    }
+    valid, suffixes = signatures.get(mime_value, (False, ()))
+    if not valid or not name_value.lower().endswith(suffixes):
+        raise APIValidationError("Image content, type, and file extension do not match")
+    return payload, mime_value
 def _content_value(item) -> dict[str, object]: return {"id": item.content_id, "type": item.type_id, "title": item.title, "data": dict(item.data), "state": item.state.value, "visibility": content_visibility(item).value}
 def _media_value(item) -> dict[str, object]: return {"id": item.media_id, "name": item.file_name, "mime_type": item.mime_type, "type": item.media_type.value, "size": item.size, "metadata": dict(item.metadata)}
 

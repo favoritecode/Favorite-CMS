@@ -45,6 +45,11 @@ test("content, media, settings, diagnostics, and extension workflows use the rea
   await page.getByLabel(/^Title/).fill(`Browser-created page ${suffix}`);
   await page.getByRole("textbox", { name: "Slug" }).fill(`browser-${suffix}`);
   await page.getByLabel("Body").fill("Created through UI, HTTP, API, Permission, and Content Engine.");
+  await page.getByLabel("Upload from PC/mobile").setInputFiles({
+    name: "browser-cover.png", mimeType: "image/png",
+    buffer: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("browser-image")]),
+  });
+  await expect(page.getByText("Featured image uploaded and attached.")).toBeVisible();
   await expect(page.getByText("Draft saved automatically.").first()).toBeVisible();
   await page.getByRole("textbox", { name: "Title", exact: true }).fill(`Browser-edited page ${suffix}`);
   await expect(page.getByText("Draft saved automatically.").first()).toBeVisible();

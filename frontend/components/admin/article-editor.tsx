@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { fieldClass, primaryButton, secondaryButton } from "./admin-ui";
 import { validArticleUrl } from "@/lib/content-editor";
+import { uploadAdminImage } from "@/lib/media-upload";
 
 type Dialog = "link" | "image" | null;
 
@@ -92,7 +93,7 @@ export function ArticleEditor({ value, onChange, disabled = false }: {
         <ModeButton active={mode === "source"} onClick={() => switchMode("source")}>HTML</ModeButton>
       </div>
     </div>
-    {mode === "rich" ? <EditorContent editor={editor} className="article-editor min-h-[28rem]" /> : <textarea aria-label="Article HTML source" className="min-h-[28rem] w-full resize-y border-0 bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100 outline-none" value={value} disabled={disabled} onChange={event => onChange(event.target.value)} spellCheck={false} />}
+    {mode === "rich" ? <EditorContent editor={editor} className="article-editor min-h-[28rem] [&_.ProseMirror]:min-h-[28rem] [&_.ProseMirror]:cursor-text [&_.ProseMirror]:p-5" /> : <textarea aria-label="Article HTML source" className="min-h-[28rem] w-full resize-y border-0 bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100 outline-none" value={value} disabled={disabled} onChange={event => onChange(event.target.value)} spellCheck={false} />}
     <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500"><span>{mode === "source" ? "HTML source" : "Rich text"}</span><span>{words} {words === 1 ? "word" : "words"} · {value.length.toLocaleString()} characters</span></div>
     {dialog === "link" && editor && <LinkDialog editor={editor} onClose={() => setDialog(null)} />}
     {dialog === "image" && editor && <ImageDialog editor={editor} onClose={() => setDialog(null)} />}
@@ -123,12 +124,18 @@ function LinkDialog({ editor, onClose }: { editor: NonNullable<ReturnType<typeof
 
 function ImageDialog({ editor, onClose }: { editor: NonNullable<ReturnType<typeof useEditor>>; onClose: () => void }) {
   const [error, setError] = useState("");
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const form = new FormData(event.currentTarget); const src = String(form.get("url") ?? "").trim();
-    if (!validArticleUrl(src, "image")) { setError("Use an HTTP or HTTPS image URL."); return; }
-    editor.chain().focus().setImage({ src, alt: String(form.get("alt") ?? "").trim(), title: String(form.get("title") ?? "").trim() }).run(); onClose();
+  const [saving, setSaving] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get("file"); let src = String(form.get("url") ?? "").trim();
+    setSaving(true); setError("");
+    try {
+      if (file instanceof File && file.size) src = await uploadAdminImage(file);
+      else if (!validArticleUrl(src, "image")) throw new Error("Use an HTTP/HTTPS URL or choose an image from this device.");
+      editor.chain().focus().setImage({ src, alt: String(form.get("alt") ?? "").trim(), title: String(form.get("title") ?? "").trim() }).run(); onClose();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Image could not be attached."); }
+    finally { setSaving(false); }
   }
-  return <EditorDialog title="Insert image" onClose={onClose}><form onSubmit={submit} className="grid gap-4"><label className="grid gap-1.5 text-sm font-medium">Image URL<input name="url" className={fieldClass} placeholder="https://images.example.com/article.jpg" autoFocus required /></label><label className="grid gap-1.5 text-sm font-medium">Alternative text<input name="alt" className={fieldClass} required /></label><label className="grid gap-1.5 text-sm font-medium">Title<input name="title" className={fieldClass} /></label>{error && <p className="text-sm text-red-700" role="alert">{error}</p>}<div className="flex justify-end gap-2"><button type="button" className={secondaryButton} onClick={onClose}>Cancel</button><button className={primaryButton}>Insert image</button></div></form></EditorDialog>;
+  return <EditorDialog title="Insert image" onClose={onClose}><form onSubmit={submit} className="grid gap-4"><label className="grid gap-1.5 text-sm font-medium">Image URL<input name="url" className={fieldClass} placeholder="https://images.example.com/article.jpg" autoFocus /></label><div className="flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />OR<span className="h-px flex-1 bg-slate-200" /></div><label className="grid gap-1.5 text-sm font-medium">Upload from this device<input name="file" type="file" accept="image/png,image/jpeg,image/webp" className={fieldClass} /><span className="text-xs font-normal text-slate-500">PNG, JPEG or WebP; maximum 4 MB.</span></label><label className="grid gap-1.5 text-sm font-medium">Alternative text<input name="alt" className={fieldClass} required /></label><label className="grid gap-1.5 text-sm font-medium">Title<input name="title" className={fieldClass} /></label>{error && <p className="text-sm text-red-700" role="alert">{error}</p>}<div className="flex justify-end gap-2"><button type="button" className={secondaryButton} onClick={onClose} disabled={saving}>Cancel</button><button className={primaryButton} disabled={saving}>{saving ? "Uploading image" : "Insert image"}</button></div></form></EditorDialog>;
 }
 
 function EditorDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {

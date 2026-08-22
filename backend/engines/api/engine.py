@@ -35,8 +35,21 @@ class APIRequest:
 @dataclass(frozen=True)
 class APIResponse:
     status: int
-    body: Mapping[str, object]
+    body: Mapping[str, object] | bytes
     headers: Mapping[str, str] = MappingProxyType({"content-type": "application/json"})
+
+@dataclass(frozen=True)
+class APIBinary:
+    """Owner-produced bounded bytes for an explicitly registered API operation."""
+    data: bytes
+    content_type: str
+    headers: Mapping[str, str] = MappingProxyType({})
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.data, bytes) or not self.data or len(self.data) > 4_000_000:
+            raise APIValidationError("Binary API response is invalid")
+        if self.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise APIValidationError("Binary API content type is unsupported")
 
 Validator = Callable[[Mapping[str, str], object], object]
 Handler = Callable[[APIRequest, object], object]
@@ -119,6 +132,9 @@ class APIEngine:
                 assert operation.authorization is not None
                 self._permissions_required().require(route.permission, operation.authorization(request))
             result = operation.handler(request, validated)
+            if isinstance(result, APIBinary):
+                headers = {"content-type": result.content_type, "x-content-type-options": "nosniff", **dict(result.headers)}
+                return APIResponse(operation.success_status, result.data, MappingProxyType(headers))
             payload = _public_value(operation.serializer(result))
             return APIResponse(operation.success_status, MappingProxyType({"success": True, "data": payload, "request_id": request_id}))
         except Exception as exc:

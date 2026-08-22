@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from uuid import uuid4
+import base64
 
 from backend.main import create_app
 from backend.tests.e2e_app import PASSWORD, seed
@@ -136,3 +137,27 @@ def test_media_accepts_bounded_description_labels_and_visibility_metadata() -> N
             "description": "", "labels": ["x" * 41], "visibility": "published",
         })
         assert invalid.status_code == 400
+
+
+def test_bounded_image_upload_uses_media_storage_and_safe_binary_delivery() -> None:
+    with TestClient(create_app(on_started=seed)) as client:
+        headers = _login(client)
+        # Signature-level transport fixture; production accepts only bounded PNG/JPEG/WebP signatures.
+        png = b"\x89PNG\r\n\x1a\n" + b"bounded-image-data"
+        uploaded = client.post("/admin/api/media", headers=headers, json={
+            "file_name": "cover.png", "mime_type": "image/png",
+            "data_base64": base64.b64encode(png).decode("ascii"), "description": "Cover",
+            "labels": ["cover"], "visibility": "published",
+        })
+        assert uploaded.status_code == 200
+        media_id = uploaded.json()["data"]["id"]
+        delivered = client.get(f"/media/{media_id}")
+        assert delivered.status_code == 200 and delivered.content == png
+        assert delivered.headers["content-type"].startswith("image/png")
+        assert delivered.headers["x-content-type-options"] == "nosniff"
+        rejected = client.post("/admin/api/media", headers=headers, json={
+            "file_name": "unsafe.svg", "mime_type": "image/svg+xml",
+            "data_base64": base64.b64encode(b"<svg><script/></svg>").decode("ascii"),
+            "description": "", "labels": [], "visibility": "published",
+        })
+        assert rejected.status_code == 400

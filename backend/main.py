@@ -65,6 +65,8 @@ def create_app(*, on_started: Callable[[Kernel], None] | None = None) -> FastAPI
                     query = {key: value for key, value in request.query_params.items()}
                     result = api.handle(route, query=query, body=body, headers=request.headers,
                                         credential=credential, request_id=request_id)
+            if isinstance(result.body, bytes):
+                return Response(result.body, result.status, headers=dict(result.headers), media_type=result.headers.get("content-type"))
             return JSONResponse(dict(result.body), result.status, headers=dict(result.headers))
         rendering = active_kernel.container.resolve("engine.rendering", RenderingEngine)
         rendered = rendering.render(route, request_id=request_id, credential=credential)
