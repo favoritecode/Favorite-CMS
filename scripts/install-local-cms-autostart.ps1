@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $TaskName = "Favorite CMS Local Servers"
-$ProjectRoot = "E:\favoriteweb"
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
 $StartupScript = Join-Path $ProjectRoot "scripts\start-local-cms.ps1"
 $LogDir = Join-Path $ProjectRoot "storage\logs"
 

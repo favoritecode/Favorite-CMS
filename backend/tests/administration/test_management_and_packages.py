@@ -20,6 +20,7 @@ from backend.engines.permissions import PermissionEngine
 from backend.engines.plugins import PluginEngine
 from backend.engines.routing import RoutingEngine
 from backend.engines.rendering import RenderingEngine
+from backend.engines.settings import SettingScope, SettingScopeKind, SettingsEngine
 from backend.engines.users import AccountState, UserEngine
 
 
@@ -212,3 +213,23 @@ def test_uploaded_plugin_installation_and_active_state_restore_after_restart(tmp
     second = build_kernel(); second.bootstrap()
     try: assert second.extensions.state(result.extension_id) is ExtensionState.ENABLED
     finally: second.shutdown()
+
+
+def test_bundled_plugin_active_state_and_explicit_grants_restore_after_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAVORITE_ENV", "test"); monkeypatch.setenv("FAVORITE_DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'bundled-restart.db'}")
+    monkeypatch.setenv("FAVORITE_STORAGE_ROOT", str(tmp_path / "storage")); monkeypatch.setenv("FAVORITE_AUTH_JWT_SECRET", "bundled-restart-signing-key-at-least-thirty-two-bytes")
+    monkeypatch.setenv("FAVORITE_ACTIVE_THEME", "favorite.theme.starter")
+    initial = build_kernel(); initial.bootstrap(); migrations = initial.container.resolve("engine.migrations", DatabaseMigrationEngine)
+    migrations.initialize_history(); migrations.upgrade()
+    plugins = initial.container.resolve("engine.plugins", PluginEngine); identifier = "favorite.plugin.seo"
+    grants = tuple(plugins.manifest(identifier).permissions)
+    settings = initial.container.resolve("engine.settings", SettingsEngine)
+    settings.set("plugin_lifecycle", SettingScope(SettingScopeKind.PLATFORM, "application.admin.platform"),
+                 {identifier: {"active": True, "grants": list(grants)}})
+    initial.shutdown()
+    restored = build_kernel(); restored.bootstrap()
+    try:
+        restored_plugins = restored.container.resolve("engine.plugins", PluginEngine)
+        assert restored.extensions.state(identifier) is ExtensionState.ENABLED
+        assert restored_plugins.granted_permissions(identifier) == tuple(sorted(grants))
+    finally: restored.shutdown()

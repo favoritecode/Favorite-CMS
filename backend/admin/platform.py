@@ -4,13 +4,16 @@ from __future__ import annotations
 from html import escape
 import base64
 import binascii
+import re
+import unicodedata
+from pathlib import PurePath
 from typing import Mapping
 from urllib.parse import quote, urlsplit
 
 from backend.admin.engine import AdminEngine, AdminModule
 from backend.admin.article import article_text, normalize_slug, sanitize_article_html, valid_slug
 from backend.core.container import ServiceContainer
-from backend.core.extensions import ExtensionManager, ManifestValidationError
+from backend.core.extensions import ExtensionManager, ExtensionState, ManifestValidationError
 from backend.engines.api import APIBinary, APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
 from backend.engines.content import ContentEngine, ContentField, ContentQuery, ContentSeoMetadata, ContentState, ContentVisibility, ContentType, FieldKind
 from backend.engines.content.engine import content_visibility
@@ -42,6 +45,13 @@ SETTING_PERMISSIONS = {"read": "platform.setting.read", "write": "platform.setti
 USER_PERMISSIONS = {action: f"platform.user.{action}" for action in ("create", "read", "update", "disable", "reset_password", "assign_roles")}
 ROLE_PERMISSIONS = {action: f"platform.role.{action}" for action in ("create", "read", "update", "delete", "assign_permissions")}
 EXTENSION_PERMISSIONS = {action: f"platform.extension.{action}" for action in ("install", "activate", "deactivate", "update", "uninstall")}
+SITE_SETTING_DEFAULTS = {
+    "site_title": ("Favorite CMS", lambda value: _bounded_setting(value, "Site title", 1, 120)),
+    "site_tagline": ("A thoughtful home for your content", lambda value: _bounded_setting(value, "Site tagline", 0, 200)),
+    "site_description": ("", lambda value: _bounded_setting(value, "Site description", 0, 500)),
+    "public_origin": ("", lambda value: _public_origin_setting(value)),
+    "default_locale": ("en", lambda value: _locale_setting(value)),
+}
 
 
 class AdminPlatformEngine:
@@ -95,6 +105,7 @@ class AdminPlatformEngine:
         rendering.register_operation(PresentationOperation("platform.public.page", OWNER, self._public_page, **presentation))
         rendering.register_operation(PresentationOperation("platform.public.content", OWNER, self._public_content, **presentation))
         rendering.register_operation(PresentationOperation("platform.public.search", OWNER, self._public_search, **presentation))
+        self._restore_plugin_lifecycle()
         self._ensure_site_owner(permissions)
         self.ready = True
     def shutdown(self) -> None: self.ready = False
@@ -193,9 +204,13 @@ class AdminPlatformEngine:
             raise APIValidationError("Media labels are invalid")
         visibility = str(data.get("visibility", "draft"))
         if visibility not in {"draft", "published", "unlisted", "private"}: raise APIValidationError("Media visibility is invalid")
+        original_name = str(data["file_name"])
+        safe_name = _safe_media_filename(original_name)
         metadata = ({"description": description, "labels": [label.strip() for label in raw_labels], "visibility": visibility}
                     if any(key in data for key in ("description", "labels", "visibility")) else {})
-        item = engine.upload(media_type=media_type, file_name=str(data["file_name"]), mime_type=mime_type, data=encoded, metadata=metadata, public=visibility in {"published", "unlisted"}, authentication=request.authentication)
+        if safe_name != original_name:
+            metadata["original_name"] = original_name
+        item = engine.upload(media_type=media_type, file_name=safe_name, mime_type=mime_type, data=encoded, metadata=metadata, public=visibility in {"published", "unlisted"}, authentication=request.authentication)
         return _media_value(item)
     def _media_delivery(self, request: APIRequest, data: object) -> APIBinary:
         engine = self._service("engine.media", MediaEngine)
@@ -211,10 +226,10 @@ class AdminPlatformEngine:
     def _settings(self, request: APIRequest, data: object) -> object:
         engine = self._service("engine.settings", SettingsEngine); scope = SettingScope(SettingScopeKind.PLATFORM, OWNER)
         if request.route.method == "PATCH":
-            if not isinstance(data, dict) or set(data) != {"value"}: raise APIValidationError("Setting request is invalid")
-            result = engine.set("site_title", scope, str(data["value"]), request.authentication)
-        else: result = engine.get("site_title", scope, request.authentication)
-        return {"key": result.key, "value": result.value, "customized": result.customized}
+            if not isinstance(data, dict) or not data or set(data) - set(SITE_SETTING_DEFAULTS): raise APIValidationError("Setting request is invalid")
+            for key, value in data.items(): engine.set(key, scope, str(value), request.authentication)
+        return {key: {"value": result.value, "customized": result.customized}
+                for key in SITE_SETTING_DEFAULTS for result in (engine.get(key, scope, request.authentication),)}
     def _extensions(self, request: APIRequest, data: object) -> object:
         manager = self._service("core.extensions", ExtensionManager)
         if request.route.method == "POST":
@@ -250,19 +265,52 @@ class AdminPlatformEngine:
                 except ManifestValidationError:
                     engine.bind_uploaded_declarative(identifier, granted_permissions=frozenset(grants))
             previous_theme = engine.active_theme if kind == "theme" else None
+            previous_plugin_active = kind == "plugin" and manager.state(identifier) is ExtensionState.ENABLED
+            previous_plugin_grants = tuple(engine.granted_permissions(identifier)) if kind == "plugin" else ()
             success = engine.activate(identifier) if action == "activate" else engine.deactivate(identifier)
             if not success: raise APIValidationError("Extension lifecycle operation failed safely")
             try:
                 self._service("engine.extension_packages", ExtensionPackageEngine).set_lifecycle(
                     identifier, extension_type=ExtensionType(kind), active=action == "activate",
                     granted_permissions=tuple(engine.granted_permissions(identifier)) if kind == "plugin" else ())
+                if kind == "plugin": self._persist_plugin_lifecycle(identifier, action == "activate", tuple(engine.granted_permissions(identifier)))
             except Exception as exc:
+                try:
+                    self._service("engine.extension_packages", ExtensionPackageEngine).set_lifecycle(
+                        identifier, extension_type=ExtensionType(kind), active=bool(previous_plugin_active) if kind == "plugin" else previous_theme == identifier,
+                        granted_permissions=previous_plugin_grants)
+                except Exception: pass
                 if kind == "theme" and previous_theme is not None: engine.activate(previous_theme)
                 elif action == "activate": engine.deactivate(identifier)
                 else: engine.activate(identifier)
                 raise APIValidationError("Extension lifecycle persistence failed; the previous state was restored") from exc
             self._audit(request, f"extension.{action}", kind, identifier)
         return self._extension_list()
+
+    def _persist_plugin_lifecycle(self, identifier: str, active: bool, grants: tuple[str, ...]) -> None:
+        settings = self._service("engine.settings", SettingsEngine); scope = SettingScope(SettingScopeKind.PLATFORM, OWNER)
+        current = dict(settings.get("plugin_lifecycle", scope).value)
+        current[identifier] = {"active": active, "grants": list(sorted(set(grants)))}
+        settings.set("plugin_lifecycle", scope, current)
+
+    def _restore_plugin_lifecycle(self) -> None:
+        settings = self._service("engine.settings", SettingsEngine); scope = SettingScope(SettingScopeKind.PLATFORM, OWNER)
+        plugins = self._service("engine.plugins", PluginEngine)
+        try: lifecycle = settings.get("plugin_lifecycle", scope).value
+        except Exception: return
+        if not isinstance(lifecycle, dict): return
+        for identifier, record in lifecycle.items():
+            if not isinstance(identifier, str) or not isinstance(record, dict) or record.get("active") is not True: continue
+            grants = record.get("grants")
+            if not isinstance(grants, list) or any(not isinstance(item, str) for item in grants): continue
+            try:
+                if not plugins.is_bound(identifier):
+                    try: plugins.bind_declarative(identifier, granted_permissions=frozenset(grants))
+                    except ManifestValidationError: plugins.bind_uploaded_declarative(identifier, granted_permissions=frozenset(grants))
+                plugins.activate(identifier)
+            except Exception:
+                # A stale or incompatible saved state fails closed and leaves the Plugin inactive.
+                continue
 
     def _extension_list(self) -> object:
         manager = self._service("core.extensions", ExtensionManager)
@@ -450,9 +498,12 @@ class AdminPlatformEngine:
         content.register_type(ContentType("page", OWNER, "Page", fields, CONTENT_PERMISSIONS))
         content.register_type(ContentType("post", OWNER, "Post", fields, CONTENT_PERMISSIONS))
         self._service("engine.media", MediaEngine).register_access(MediaAccessContract(OWNER, MEDIA_PERMISSIONS))
-        self._service("engine.settings", SettingsEngine).register(SettingDefinition(
-            "site_title", OWNER, SettingScopeKind.PLATFORM, str, default="Favorite CMS",
-            read_permission=SETTING_PERMISSIONS["read"], write_permission=SETTING_PERMISSIONS["write"]))
+        settings = self._service("engine.settings", SettingsEngine)
+        for key, (default, validator) in SITE_SETTING_DEFAULTS.items():
+            settings.register(SettingDefinition(key, OWNER, SettingScopeKind.PLATFORM, str, default=default,
+                validator=validator, read_permission=SETTING_PERMISSIONS["read"], write_permission=SETTING_PERMISSIONS["write"]))
+        settings.register(SettingDefinition("plugin_lifecycle", OWNER, SettingScopeKind.PLATFORM, dict,
+            default={}, validator=_plugin_lifecycle_setting))
         self._service("engine.search", SearchEngine).register_type(SearchableType(
             "content", OWNER, CONTENT_PERMISSIONS["read"], self._content_visibility))
         localization = self._service("engine.localization", LocalizationEngine)
@@ -544,27 +595,38 @@ def _binary_media_data(value: object, mime_value: object, name_value: object) ->
     try: payload = base64.b64decode(value, validate=True)
     except (ValueError, binascii.Error) as exc: raise APIValidationError("Image upload encoding is invalid") from exc
     if not 1 <= len(payload) <= 10_000_000: raise APIValidationError("Media file must be no larger than 10 MB")
-    signatures: dict[str, tuple[bool, tuple[str, ...], MediaType]] = {
-        "image/jpeg": (payload.startswith(b"\xff\xd8\xff"), (".jpg", ".jpeg"), MediaType.IMAGE),
-        "image/png": (payload.startswith(b"\x89PNG\r\n\x1a\n"), (".png",), MediaType.IMAGE),
-        "image/webp": (len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP", (".webp",), MediaType.IMAGE),
-        "image/gif": (payload.startswith((b"GIF87a", b"GIF89a")), (".gif",), MediaType.IMAGE),
-        "video/mp4": (len(payload) >= 12 and payload[4:8] == b"ftyp", (".mp4",), MediaType.VIDEO),
-        "video/webm": (payload.startswith(b"\x1aE\xdf\xa3"), (".webm",), MediaType.VIDEO),
-        "application/pdf": (payload.startswith(b"%PDF-"), (".pdf",), MediaType.DOCUMENT),
-        "text/plain": (b"\x00" not in payload, (".txt", ".md"), MediaType.DOCUMENT),
-        "text/csv": (b"\x00" not in payload, (".csv",), MediaType.DOCUMENT),
-        "application/json": (b"\x00" not in payload and payload.lstrip().startswith((b"{", b"[")), (".json",), MediaType.DOCUMENT),
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (payload.startswith(b"PK\x03\x04"), (".docx",), MediaType.DOCUMENT),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": (payload.startswith(b"PK\x03\x04"), (".xlsx",), MediaType.DOCUMENT),
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation": (payload.startswith(b"PK\x03\x04"), (".pptx",), MediaType.DOCUMENT),
-    }
-    valid, suffixes, media_type = signatures.get(mime_value, (False, (), MediaType.DOCUMENT))
-    if not valid or not name_value.lower().endswith(suffixes):
-        raise APIValidationError("Image content, type, and file extension do not match")
-    return payload, mime_value, media_type
+    signatures: tuple[tuple[str, bool, tuple[str, ...], MediaType], ...] = (
+        ("image/jpeg", payload.startswith(b"\xff\xd8\xff"), (".jpg", ".jpeg"), MediaType.IMAGE),
+        ("image/png", payload.startswith(b"\x89PNG\r\n\x1a\n"), (".png",), MediaType.IMAGE),
+        ("image/webp", len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP", (".webp",), MediaType.IMAGE),
+        ("image/gif", payload.startswith((b"GIF87a", b"GIF89a")), (".gif",), MediaType.IMAGE),
+        ("video/mp4", len(payload) >= 12 and payload[4:8] == b"ftyp", (".mp4",), MediaType.VIDEO),
+        ("video/webm", payload.startswith(b"\x1aE\xdf\xa3"), (".webm",), MediaType.VIDEO),
+        ("application/pdf", payload.startswith(b"%PDF-"), (".pdf",), MediaType.DOCUMENT),
+        ("application/json", b"\x00" not in payload and payload.lstrip().startswith((b"{", b"[")), (".json",), MediaType.DOCUMENT),
+        ("text/csv", b"\x00" not in payload, (".csv",), MediaType.DOCUMENT),
+        ("text/plain", b"\x00" not in payload, (".txt", ".md"), MediaType.DOCUMENT),
+        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", payload.startswith(b"PK\x03\x04"), (".docx",), MediaType.DOCUMENT),
+        ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", payload.startswith(b"PK\x03\x04"), (".xlsx",), MediaType.DOCUMENT),
+        ("application/vnd.openxmlformats-officedocument.presentationml.presentation", payload.startswith(b"PK\x03\x04"), (".pptx",), MediaType.DOCUMENT),
+    )
+    suffix = PurePath(name_value).suffix.lower()
+    matched = next(((mime, kind) for mime, valid, suffixes, kind in signatures if valid and suffix in suffixes), None)
+    if matched is None: raise APIValidationError("Media content and file extension do not match a supported format")
+    detected_mime, media_type = matched
+    if mime_value and mime_value not in {detected_mime, "application/octet-stream", "image/jpg"}:
+        raise APIValidationError("Browser file information conflicts with detected media content")
+    return payload, detected_mime, media_type
+
+def _safe_media_filename(value: str) -> str:
+    if not value or PurePath(value).name != value or "/" in value or "\\" in value or len(value) > 255:
+        raise APIValidationError("Media file name is invalid")
+    suffix = PurePath(value).suffix.lower()
+    stem = unicodedata.normalize("NFKD", PurePath(value).stem).encode("ascii", "ignore").decode("ascii")
+    stem = re.sub(r"[^A-Za-z0-9._ -]+", "-", stem).strip(" .-_") or "media"
+    return f"{stem[:max(1, 254-len(suffix))]}{suffix}"
 def _content_value(item) -> dict[str, object]: return {"id": item.content_id, "type": item.type_id, "title": item.title, "data": dict(item.data), "state": item.state.value, "visibility": content_visibility(item).value}
-def _media_value(item) -> dict[str, object]: return {"id": item.media_id, "name": item.file_name, "mime_type": item.mime_type, "type": item.media_type.value, "size": item.size, "metadata": dict(item.metadata)}
+def _media_value(item) -> dict[str, object]: return {"id": item.media_id, "name": str(item.metadata.get("original_name", item.file_name)), "mime_type": item.mime_type, "type": item.media_type.value, "size": item.size, "metadata": dict(item.metadata)}
 
 def _extension_value(manager: ExtensionManager, plugins: PluginEngine, identifier: str,
                      active_theme: str | None, package_managed: bool) -> dict[str, object]:
@@ -622,6 +684,28 @@ def _role_id(value: str) -> str:
 
 def _search_href(resource_type: str, resource_id: str) -> str:
     return f"/site/content/{quote(resource_id, safe='')}" if resource_type == "content" else "/site/content"
+
+def _bounded_setting(value: object, label: str, minimum: int, maximum: int) -> None:
+    if not isinstance(value, str) or not minimum <= len(value.strip()) <= maximum:
+        raise APIValidationError(f"{label} must contain between {minimum} and {maximum} characters")
+
+def _public_origin_setting(value: object) -> None:
+    if not isinstance(value, str) or len(value) > 500: raise APIValidationError("Public origin is invalid")
+    if not value: return
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise APIValidationError("Public origin must be an HTTP(S) origin without credentials or a path")
+
+def _locale_setting(value: object) -> None:
+    if value not in {"en", "fr"}: raise APIValidationError("Default locale is not registered")
+
+def _plugin_lifecycle_setting(value: object) -> None:
+    if not isinstance(value, dict) or len(value) > 100: raise APIValidationError("Plugin lifecycle state is invalid")
+    for identifier, record in value.items():
+        if (not isinstance(identifier, str) or not isinstance(record, dict) or set(record) != {"active", "grants"}
+                or not isinstance(record["active"], bool) or not isinstance(record["grants"], list)
+                or len(record["grants"]) > 100 or any(not isinstance(item, str) for item in record["grants"])):
+            raise APIValidationError("Plugin lifecycle state is invalid")
 
 def _starter_renderer(themes: ThemeEngine, theme_id: str, reference: str):
     def render(values: Mapping[str, object]) -> str:

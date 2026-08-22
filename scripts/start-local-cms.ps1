@@ -1,10 +1,14 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = "E:\favoriteweb"
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
 $FrontendRoot = Join-Path $ProjectRoot "frontend"
-$PythonExe = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-$EnvFile = Join-Path $ProjectRoot ".env"
+$LocalVenv = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$SiblingVenv = "$ProjectRoot.venv\Scripts\python.exe"
+$PythonExe = if (Test-Path -LiteralPath $LocalVenv) { $LocalVenv } else { $SiblingVenv }
+$LocalEnv = Join-Path $ProjectRoot ".env"
+$SiblingEnv = "$ProjectRoot.env"
+$EnvFile = if (Test-Path -LiteralPath $LocalEnv) { $LocalEnv } else { $SiblingEnv }
 $LogDir = Join-Path $ProjectRoot "storage\logs"
 $StartupLog = Join-Path $LogDir "startup.log"
 $StartupErrorLog = Join-Path $LogDir "startup-error.log"
@@ -251,6 +255,13 @@ function Wait-FavoriteFrontend {
 
 try {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+    if ($null -eq (Get-Command "node.exe" -ErrorAction SilentlyContinue)) {
+        $BundledNode = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin"
+        if (Test-Path -LiteralPath (Join-Path $BundledNode "node.exe")) {
+            $env:Path = "$BundledNode;$env:Path"
+        }
+    }
 
     if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
         Stop-WithError "Python virtual environment executable was not found at $PythonExe."

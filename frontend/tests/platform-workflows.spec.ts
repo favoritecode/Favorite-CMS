@@ -152,6 +152,12 @@ test("first-party Plugin activates with explicit capabilities and cleans up thro
   await configurePlugin(page, "favorite.plugin.example");
   await page.getByLabel("Plugin message").fill("Saved through the real Plugin API.");
   await savePluginSettings(page);
+  await page.getByRole("button", { name: "Close settings" }).click();
+  await page.goto("/admin/settings");
+  await expect(page.getByRole("heading", { name: "Active Plugin settings" })).toBeVisible();
+  await expect(page.getByText("Example Plugin", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Configure" }).click();
+  await expect(page.getByLabel("Plugin message")).toHaveValue("Saved through the real Plugin API.");
   await page.goto("http://127.0.0.1:8011/plugins/example");
   await expect(page.getByRole("heading", { name: "Example Plugin" })).toBeVisible();
   await expect(page.getByText("Saved through the real Plugin API.")).toBeVisible();

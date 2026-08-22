@@ -26,6 +26,21 @@ def test_dashboard_is_authenticated_and_permission_filtered() -> None:
         assert viewer == {"areas": []}
 
 
+def test_site_settings_expose_safe_identity_fields_and_validate_public_origin() -> None:
+    with TestClient(create_app(on_started=seed)) as client:
+        headers = _login(client)
+        values = client.get("/admin/api/settings", headers=headers)
+        assert values.status_code == 200
+        assert set(values.json()["data"]) == {"site_title", "site_tagline", "site_description", "public_origin", "default_locale"}
+        saved = client.patch("/admin/api/settings", headers=headers, json={
+            "site_title": "Favorite Web", "site_tagline": "Publish with clarity",
+            "site_description": "A safe generic CMS website.", "public_origin": "https://favoriteweb.net", "default_locale": "en",
+        })
+        assert saved.status_code == 200 and saved.json()["data"]["site_title"]["value"] == "Favorite Web"
+        rejected = client.patch("/admin/api/settings", headers=headers, json={"public_origin": "https://user:secret@example.test/path"})
+        assert rejected.status_code == 400 and "secret" not in rejected.text
+
+
 def test_content_edit_publish_delete_and_media_listing_use_engine_contracts() -> None:
     with TestClient(create_app(on_started=seed)) as client:
         headers = _login(client)
@@ -173,3 +188,9 @@ def test_bounded_image_upload_uses_media_storage_and_safe_binary_delivery() -> N
         assert private_delivery.status_code == 404
         protected_delivery = client.get(f"/media/{video.json()['data']['id']}", headers=headers)
         assert protected_delivery.status_code == 200 and protected_delivery.content == mp4
+        mobile = client.post("/admin/api/media", headers=headers, json={
+            "file_name": "ছবি ২০২৬.png", "mime_type": "", "data_base64": base64.b64encode(png).decode("ascii"),
+            "description": "Phone upload", "labels": [], "visibility": "private",
+        })
+        assert mobile.status_code == 200 and mobile.json()["data"]["name"] == "ছবি ২০২৬.png"
+        assert mobile.json()["data"]["mime_type"] == "image/png"
