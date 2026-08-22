@@ -481,4 +481,3 @@ For an approved source update: stop services, preserve database/Storage/configur
 - DNS, TLS, firewall, log retention, monitoring, and process supervision configured by operator
 - Plugin capabilities reviewed before activation
 - backup and restore rehearsal completed
-
