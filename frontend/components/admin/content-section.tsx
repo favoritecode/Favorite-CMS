@@ -2,7 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, ExternalLink, Eye, FilePenLine, FileText, Plus, RefreshCw, Search, Send, Trash2, X } from "lucide-react";
+import { Archive, ExternalLink, Eye, FilePenLine, FileText, Plus, RefreshCw, Search, Send, Trash2, Upload, X } from "lucide-react";
 import { AdminRequestError, adminRequest, isAuthenticationError } from "@/lib/admin-client";
 import type { ContentCapabilities, ContentItem, ContentPreview } from "@/lib/admin-types";
 import { manuallyEditedSlug, regeneratedSlug, slugifyTitle, titleDrivenSlug, uniqueSlugSuggestion } from "@/lib/content-editor";
@@ -14,6 +14,7 @@ type FieldErrors = Partial<Record<"title" | "slug" | "body" | "featuredImage" | 
 type VisibilityChoice = "draft" | "published" | "unlisted" | "private";
 type EditorState = { mode: "create" | "edit"; item?: ContentItem; title: string; slug: string; slugManual: boolean; body: string; featuredImage: string; labels: string; visibility: VisibilityChoice; errors: FieldErrors };
 type Confirmation = { action: "publish" | "archive" | "delete"; item: ContentItem } | null;
+type ImportResult = { imported: number; published: number; drafts: number; ignored: number; items: ContentItem[] };
 const noCapabilities: ContentCapabilities = { create: false, read: false, update: false, delete: false, publish: false, archive: false };
 
 export function ContentSection({ contentType }: { contentType: "post" | "page" }) {
@@ -26,6 +27,7 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
   const [query, setQuery] = useState(""); const [stateFilter, setStateFilter] = useState("all");
   const [editor, setEditor] = useState<EditorState | null>(null); const [preview, setPreview] = useState<ContentPreview | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation>(null); const [submitting, setSubmitting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [autosaving, setAutosaving] = useState(false); const [autosaveStatus, setAutosaveStatus] = useState("Draft autosave starts after required fields are complete.");
   const autosaveSequence = useRef(0); const autosaveInFlight = useRef(false); const editorRef = useRef<EditorState | null>(null); editorRef.current = editor;
   const [autosaveRetry, setAutosaveRetry] = useState(0);
@@ -36,7 +38,7 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
     setLoading(true); setError("");
     try {
       const [content, allowed] = await Promise.all([
-        adminRequest<ContentItem[]>("/admin/manage/transport/content"),
+        loadAllContent(),
         adminRequest<ContentCapabilities>("/admin/manage/transport/content-capabilities"),
       ]);
       setAllItems(content); setItems(content.filter(item => item.type === contentType)); setCapabilities(allowed);
@@ -179,13 +181,38 @@ export function ContentSection({ contentType }: { contentType: "post" | "page" }
     <div className="flex flex-col gap-3 border-y border-slate-200 bg-white p-4 sm:flex-row sm:items-center">
       <label className="relative min-w-0 flex-1"><span className="sr-only">Search {plural}</span><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input className={`${fieldClass} pl-9`} value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${plural}`} /></label>
       <label className="sm:w-44"><span className="sr-only">Filter by state</span><select className={fieldClass} value={stateFilter} onChange={event => setStateFilter(event.target.value)}><option value="all">All states</option><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></select></label>
+      <button type="button" className={secondaryButton} onClick={() => setImportOpen(true)} disabled={!capabilities.create} title={!capabilities.create ? "Create permission is required" : undefined}><Upload className="size-4" />Import Blogger</button>
       <button type="button" className={primaryButton} onClick={openCreate} disabled={!capabilities.create} title={!capabilities.create ? "Create permission is required" : undefined}><Plus className="size-4" />New {singular}</button>
     </div>
     {loading && items.length === 0 ? <LoadingPanel label={`Loading ${plural}`} /> : error ? <ErrorPanel message={error} onRetry={() => void load()} /> : filtered.length === 0 ? <EmptyState title={items.length ? `No matching ${plural}` : `No ${plural} yet`} detail={items.length ? "Change the search or state filter." : `Create your first ${singular} as a private draft.`} action={!items.length && capabilities.create ? <button className={primaryButton} onClick={openCreate}><Plus className="size-4" />Create {singular}</button> : undefined} /> : <ContentTable items={filtered} capabilities={capabilities} onEdit={openEdit} onAction={(action, item) => setConfirmation({ action, item })} />}
     {editor && <EditorPanel editor={editor} singular={singular} capabilities={capabilities} busy={submitting || autosaving} autosaveStatus={autosaveStatus} onTitle={updateTitle} onSlug={updateSlug} onRegenerate={regenerate} onBody={body => setEditor({ ...editor, body, errors: { ...editor.errors, body: undefined } })} onFeaturedImage={featuredImage => setEditor({ ...editor, featuredImage, errors: { ...editor.errors, featuredImage: undefined } })} onLabels={labels => setEditor({ ...editor, labels, errors: { ...editor.errors, labels: undefined } })} onVisibility={visibility => setEditor({ ...editor, visibility })} onClose={() => !submitting && !autosaving && setEditor(null)} onSave={() => void saveDraft()} onPublish={() => void publishNow()} onPreview={() => void showPreview()} onAction={(action, item) => setConfirmation({ action, item })} />}
     {preview && <PreviewDialog preview={preview} onClose={() => setPreview(null)} />}
+    {importOpen && <BloggerImportDialog busy={submitting} onClose={() => setImportOpen(false)} onImport={async (xml, preservePublished) => { setSubmitting(true); try { const result = await adminRequest<ImportResult>("/admin/manage/transport/content-import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ format: "blogger-atom", xml, preserve_published: preservePublished }) }); notify(`Imported ${result.imported} Blogger items: ${result.published} published, ${result.drafts} drafts.`); setImportOpen(false); await load(); } catch (reason) { notify(reason instanceof Error ? reason.message : "Blogger import failed.", "error"); } finally { setSubmitting(false); } }} />}
     <ConfirmDialog open={confirmation !== null} title={confirmation?.action === "delete" ? `Delete ${singular}?` : confirmation?.action === "publish" ? `Publish this ${singular}?` : `Archive this ${singular}?`} detail={confirmation?.action === "delete" ? "This permanently deletes the content record. This action cannot be undone." : confirmation?.action === "publish" ? "The saved draft and current editor changes will become public." : "This content will leave the published workflow."} confirmLabel={confirmation?.action === "delete" ? "Delete" : confirmation?.action === "publish" ? "Publish" : "Archive"} tone={confirmation?.action === "publish" ? "primary" : "danger"} busy={submitting} onCancel={() => setConfirmation(null)} onConfirm={() => void confirmAction()} />
   </div>;
+}
+
+async function loadAllContent(): Promise<ContentItem[]> {
+  const items: ContentItem[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const batch = await adminRequest<ContentItem[]>(`/admin/manage/transport/content?page=${page}&page_size=100`);
+    items.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return items;
+}
+
+function BloggerImportDialog({ busy, onClose, onImport }: { busy: boolean; onClose: () => void; onImport: (xml: string, preservePublished: boolean) => Promise<void> }) {
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setError(""); const form = new FormData(event.currentTarget); const file = form.get("file");
+    if (!(file instanceof File) || !file.size) { setError("Choose a Blogger XML export."); return; }
+    if (file.size > 25_000_000) { setError("Blogger export must be no larger than 25 MB."); return; }
+    if (!file.name.toLocaleLowerCase().endsWith(".xml")) { setError("Choose the .xml file exported by Blogger."); return; }
+    const xml = await file.text();
+    await onImport(xml, form.get("preservePublished") === "on");
+  }
+  return <div className="fixed inset-0 z-[75] grid place-items-center bg-slate-950/45 p-4" role="presentation"><section role="dialog" aria-modal="true" aria-labelledby="blogger-import-title" className="w-full max-w-xl rounded-md bg-white shadow-2xl"><header className="flex items-center justify-between border-b border-slate-200 px-5 py-4"><div><p className="text-xs font-semibold uppercase text-sky-700">Content migration</p><h2 id="blogger-import-title" className="font-semibold">Import from Blogger</h2></div><button type="button" title="Close import" aria-label="Close import" onClick={onClose} disabled={busy} className="rounded p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-600"><X className="size-5" /></button></header><form className="grid gap-5 p-5" onSubmit={submit}><p className="text-sm leading-6 text-slate-600">Upload the XML file from Blogger Settings → Back up content. Posts, pages, labels and safe article HTML are imported. Comments and unsupported Blogger records are ignored.</p><label className="grid gap-2 text-sm font-medium">Blogger XML export<input name="file" type="file" accept="application/xml,text/xml,.xml" className={fieldClass} disabled={busy} required /><span className="text-xs font-normal text-slate-500">Maximum 25 MB, 5,000 posts/pages and 50 MB sanitized article content.</span></label><label className="flex items-start gap-3 text-sm"><input name="preservePublished" type="checkbox" className="mt-1 size-4" /><span><strong className="block font-semibold">Publish entries that were published on Blogger</strong><span className="mt-1 block text-xs leading-5 text-slate-500">Leave unchecked to import everything as private drafts for review. Publishing requires explicit Content publish permission.</span></span></label><p className="text-xs leading-5 text-slate-500">Scripts, iframes, embedded executable markup and unsafe URLs are removed by the existing article sanitizer. Existing Content is never overwritten; duplicate slugs receive a numeric suffix.</p>{error && <p className="text-sm text-red-700" role="alert">{error}</p>}<div className="flex justify-end gap-2"><button type="button" className={secondaryButton} onClick={onClose} disabled={busy}>Cancel</button><button className={primaryButton} disabled={busy}><Upload className="size-4" />{busy ? "Importing" : "Import content"}</button></div></form></section></div>;
 }
 
 function editorData(editor: EditorState) {

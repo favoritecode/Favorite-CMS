@@ -301,7 +301,9 @@ class ContentEngine:
         self._invalidate(); return self._load(current.content_id)
 
     def _validate_data(self, contract: ContentType, data: Mapping[str, object]) -> Mapping[str, object]:
-        result = json_mapping(data, "Content data")
+        # Content may contain a long article/code body; other structured contracts keep the
+        # shared 1 MB default. The Admin authoring boundary enforces the stricter field limit.
+        result = json_mapping(data, "Content data", maximum=2_100_000)
         fields = {field.name: field for field in contract.fields}
         if set(result) - set(fields): raise InvalidContent("Content data contains unsupported fields")
         for field in contract.fields:

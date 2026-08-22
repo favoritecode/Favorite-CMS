@@ -25,7 +25,7 @@ def text(value: str, label: str, *, maximum: int = 1000) -> str:
     return normalized
 
 
-def json_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
+def json_mapping(value: Mapping[str, object], label: str, *, maximum: int = 1_000_000) -> Mapping[str, object]:
     copied = dict(value)
     if any(not isinstance(key, str) or not key.strip() for key in copied):
         raise ValueError(f"{label} is invalid")
@@ -34,7 +34,7 @@ def json_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object
         decoded = json.loads(encoded)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label} is invalid") from exc
-    if len(encoded) > 1_000_000:
+    if len(encoded) > maximum:
         raise ValueError(f"{label} is too large")
     return MappingProxyType(decoded)
 

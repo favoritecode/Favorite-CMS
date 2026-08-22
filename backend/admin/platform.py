@@ -12,6 +12,7 @@ from urllib.parse import quote, urlsplit
 
 from backend.admin.engine import AdminEngine, AdminModule
 from backend.admin.article import article_text, normalize_slug, sanitize_article_html, valid_slug
+from backend.admin.blogger_import import MAX_CONTENT_BODY_CHARACTERS, parse_blogger_export, unique_import_slug
 from backend.core.container import ServiceContainer
 from backend.core.extensions import ExtensionManager, ExtensionState, ManifestValidationError
 from backend.engines.api import APIBinary, APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
@@ -79,6 +80,7 @@ class AdminPlatformEngine:
             admin.register_module(AdminModule(f"admin.{area}", OWNER, area.title(), destinations[area], permission_id, action, f"admin_{area}", order))
         api = self._service("engine.api", APIEngine)
         self._register(api, "content", "/admin/api/content", ("GET", "POST", "PATCH", "DELETE"), self._content, "content")
+        self._register(api, "content_import", "/admin/api/content/import", ("POST",), self._content_import, "content")
         self._register(api, "content_preview", "/admin/api/content/preview", ("POST",), self._content_preview, "content")
         self._register(api, "content_capabilities", "/admin/api/content/capabilities", ("GET",), self._content_capabilities, "content")
         self._register(api, "content_seo", "/admin/api/content/seo", ("GET", "PATCH"), self._content_seo, "content")
@@ -118,7 +120,18 @@ class AdminPlatformEngine:
         api.register(RouteDefinition(target, OWNER, RouteType.API, path, methods, target, authentication_required=True, permission=PERMISSIONS[area]), APIOperation(target, OWNER, _any_input, handler, lambda value: value, authorization=lambda request: AuthorizationContext(action, resource, request.authentication)))
     def _content(self, request: APIRequest, data: object) -> object:
         engine = self._service("engine.content", ContentEngine)
-        if request.route.method == "GET": return [_content_value(item) for item in engine.query(ContentQuery(page_size=50), request.authentication)]
+        if request.route.method == "GET":
+            if set(request.query) - {"page", "page_size", "type_id"}:
+                raise APIValidationError("Content query is invalid")
+            try:
+                page = int(request.query.get("page", "1")); page_size = int(request.query.get("page_size", "50"))
+            except ValueError as exc:
+                raise APIValidationError("Content pagination is invalid") from exc
+            if page < 1 or not 1 <= page_size <= 100:
+                raise APIValidationError("Content pagination is invalid")
+            type_id = request.query.get("type_id") or None
+            items = engine.query(ContentQuery(type_id=type_id, page=page, page_size=page_size), request.authentication)
+            return [_content_value(item) for item in items]
         if not isinstance(data, dict): raise APIValidationError("Content request is invalid")
         if request.route.method == "DELETE":
             if set(data) != {"id"}: raise APIValidationError("Content request is invalid")
@@ -157,6 +170,37 @@ class AdminPlatformEngine:
         model = {"view": "detail", "title": title, "body": content_data["body"],
                  "featured_image": content_data["featured_image"], "published_at": ""}
         return {"title": title, "data": dict(content_data), "html": _view_markup(model)}
+    def _content_import(self, request: APIRequest, data: object) -> object:
+        if not isinstance(data, dict) or set(data) != {"format", "xml", "preserve_published"}:
+            raise APIValidationError("Content import request is invalid")
+        if data["format"] != "blogger-atom" or not isinstance(data["preserve_published"], bool):
+            raise APIValidationError("Content import request is invalid")
+        entries, ignored = parse_blogger_export(data["xml"])
+        engine = self._service("engine.content", ContentEngine)
+        permissions = self._service("engine.permissions", PermissionEngine)
+        if data["preserve_published"] and any(entry.published for entry in entries):
+            permissions.require(CONTENT_PERMISSIONS["publish"], AuthorizationContext(
+                "publish", "content", request.authentication))
+        used: set[str] = set()
+        page = 1
+        while True:
+            current = engine.query(ContentQuery(page=page, page_size=100), request.authentication)
+            used.update(str(item.data.get("slug", "")) for item in current)
+            if len(current) < 100: break
+            page += 1
+        imported = 0; published = 0; drafts = 0; imported_items = []
+        for entry in entries:
+            slug = unique_import_slug(entry.slug, used)
+            item = engine.create(entry.type_id, title=entry.title, data={
+                "slug": slug, "body": entry.body, "featured_image": "",
+                "labels": list(entry.labels), "visibility": "public" if entry.published else "private",
+            }, metadata={"import_source": "blogger"}, authentication=request.authentication)
+            if data["preserve_published"] and entry.published:
+                item = engine.publish(item.content_id, request.authentication); published += 1
+            else: drafts += 1
+            self._index_content(item); imported += 1; imported_items.append(_content_value(item))
+        return {"imported": imported, "published": published, "drafts": drafts, "ignored": ignored,
+                "items": imported_items}
     def _content_capabilities(self, request: APIRequest, data: object) -> object:
         permissions = self._service("engine.permissions", PermissionEngine)
         return {action: permissions.evaluate(permission_id, AuthorizationContext(
@@ -564,8 +608,10 @@ class AdminPlatformEngine:
             return ResourceVisibility(False, False, None)
 
     def _index_content(self, item) -> None:
+        # Search owns a bounded projection, not the complete Content body.
+        searchable = article_text(str(item.data.get("body", "")))[:100_000]
         self._service("engine.search", SearchEngine).index(SearchDocument(
-            item.content_id, "content", item.title, article_text(str(item.data.get("body", ""))),
+            item.content_id, "content", item.title, searchable,
             labels=tuple(str(label) for label in item.data.get("labels", ())), resource_reference=f"content:{item.content_id}"))
 
 def _any_input(query: Mapping[str, str], body: object) -> object: return body
@@ -581,11 +627,13 @@ def _content_authoring_input(title: object, data: object) -> tuple[str, Mapping[
     values = _mapping(data)
     if set(values) - {"slug", "body", "featured_image", "labels", "visibility"} or not {"slug", "body"}.issubset(values) or not isinstance(values["slug"], str) or not isinstance(values["body"], str):
         raise APIValidationError("Page content fields are invalid")
+    if len(values["body"]) > 2_100_000:
+        raise APIValidationError("Content source must be no larger than 2,100,000 characters")
     slug, body = normalize_slug(values["slug"]), sanitize_article_html(values["body"])
     if not valid_slug(slug):
         raise APIValidationError("Content slug must use Unicode letters, numbers, and single hyphens")
-    if not 1 <= len(body) <= 100_000:
-        raise APIValidationError("Content body must contain between 1 and 100,000 characters")
+    if not 1 <= len(body) <= MAX_CONTENT_BODY_CHARACTERS:
+        raise APIValidationError("Content body must contain between 1 and 2,000,000 characters")
     featured_image = _featured_image(values.get("featured_image", ""))
     raw_labels = values.get("labels", [])
     if not isinstance(raw_labels, list) or len(raw_labels) > 20 or any(not isinstance(label, str) for label in raw_labels):

@@ -5,7 +5,7 @@ import { fetchAdminBackend, safeError, serviceUnavailableError } from "@/lib/adm
 const destinations = new Map([
   ["dashboard", "/admin/api/dashboard"], ["content", "/admin/api/content"], ["media", "/admin/api/media"],
   ["content-preview", "/admin/api/content/preview"], ["content-capabilities", "/admin/api/content/capabilities"],
-  ["content-seo", "/admin/api/content/seo"],
+  ["content-seo", "/admin/api/content/seo"], ["content-import", "/admin/api/content/import"],
   ["settings", "/admin/api/settings"], ["extensions", "/admin/api/extensions"], ["applications", "/admin/api/applications"], ["users", "/admin/api/users"], ["roles", "/admin/api/roles"],
   ["diagnostics", "/admin/api/diagnostics"], ["plugin-example", "/api/plugins/example"],
   ["plugin-seo", "/api/plugins/seo/settings"], ["plugin-seo-content", "/api/plugins/seo/content"],

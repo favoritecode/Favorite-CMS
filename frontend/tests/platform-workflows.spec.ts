@@ -32,6 +32,22 @@ async function savePluginSettings(page: Page) {
   expect(response.status(), await response.text()).toBe(200);
 }
 
+test("Blogger XML import uses real Content transport and defaults to drafts", async ({ page }) => {
+  await login(page);
+  await page.goto("/admin/posts");
+  await page.getByRole("button", { name: "Import Blogger" }).click();
+  await expect(page.getByRole("heading", { name: "Import from Blogger" })).toBeVisible();
+  const suffix = Date.now();
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><category term="http://schemas.google.com/blogger/2008/kind#post"/><category term="Imported"/><title>Blogger browser ${suffix}</title><content type="html">&lt;pre&gt;&lt;code&gt;const imported = true;&lt;/code&gt;&lt;/pre&gt;</content><link rel="alternate" href="https://old.example.test/2024/01/blogger-browser-${suffix}.html"/></entry></feed>`;
+  await page.getByLabel("Blogger XML export").setInputFiles({ name: "blogger.xml", mimeType: "application/xml", buffer: Buffer.from(xml) });
+  const [response] = await Promise.all([
+    page.waitForResponse(value => value.url().includes("/admin/manage/transport/content-import") && value.request().method() === "POST"),
+    page.getByRole("button", { name: "Import content" }).click(),
+  ]);
+  expect(response.status(), await response.text()).toBe(200);
+  await expect(page.getByText("Imported 1 Blogger items: 0 published, 1 drafts.")).toBeVisible();
+});
+
 test("content, media, settings, diagnostics, and extension workflows use the real platform", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();

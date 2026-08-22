@@ -440,7 +440,15 @@ Only ports 22, 80, and 443 should normally be public. Keep PostgreSQL, 8060, 802
 
 Uploaded Plugin ZIPs are declarative packages. Favorite CMS does not execute arbitrary uploaded Python/JavaScript and has no marketplace or remote Plugin installer.
 
-## 6. Update, backup, and recovery
+## 6. Blogger migration, update, backup, and recovery
+
+### Blogger migration
+
+In Blogger, create a content backup from **Settings → Manage blog → Back up content**. In Favorite CMS, sign in with explicit Content create permission, open Posts or Pages, choose **Import Blogger**, and select the exported `.xml` file. Imports are limited to 25 MB, 5,000 posts/pages, and 50 MB of sanitized article content per operation. Existing Content is never overwritten; duplicate slugs receive a numeric suffix. Imports default to private drafts. Preserving Blogger publication state requires explicit Content publish permission. Comments and unsupported Blogger records are ignored, and scripts/iframes/unsafe markup are removed.
+
+Individual article/code bodies support up to 2,000,000 sanitized characters. This is deliberately bounded rather than unlimited to protect API, database, browser, and rendering memory. Media/video/document uploads remain independently limited to 10 MB per file and must pass filename, extension, MIME/signature, and Storage-boundary validation.
+
+### Update, backup, and recovery
 
 Before an update:
 
