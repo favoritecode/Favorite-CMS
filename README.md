@@ -70,6 +70,7 @@ Authorized operators can install local Theme ZIPs and declarative Plugin ZIPs fr
 Operators explicitly granted `admin.diagnostics.view` receive a redacted system-status dashboard and detailed Diagnostics page. Public Health remains minimal. The private view reports only owner-confirmed states and provider types—never configuration values, Database URLs, Storage paths, credentials, Notification payloads, or stack traces. It does not perform migration, installation, update, or recovery actions.
 
 See [distribution documentation](docs/distribution.md), [deployment runbook](docs/runbooks/deployment.md), and [operations runbook](docs/runbooks/operations.md).
+For an end-to-end Ubuntu VPS layout and the existing Windows local/autostart flow, see [VPS and local hosting](docs/vps-and-local-hosting.md).
 
 ## Development
 

@@ -23,6 +23,8 @@ Load the Worker environment into the Worker process, then run:
 python -m uvicorn favorite_worker.app:create_app --factory --host 127.0.0.1 --port 8060
 ```
 
+On Windows, the repository's existing `scripts/start-local-cms.ps1` starts or reuses this Worker before backend/frontend startup whenever both CMS-side Worker settings are configured. `scripts/install-local-cms-autostart.ps1` installs that same unified startup flow at user logon; it does not create a second service architecture.
+
 Configure the CMS-side Tool provider with the matching private Worker URL and token through Configuration. Keep both values server-only. Put the Worker behind an internal network boundary; do not publish its bearer token or artifact endpoint to browsers.
 
 The current Worker keeps active job state in memory and completed download artifacts in its configured spool. A Worker restart can therefore interrupt an in-flight job. Artifact retention and cleanup are operator-managed in 0.1.0. Private CMS Media cannot yet be sent to the Worker because a signed service-to-service Media delivery contract does not exist. Public anonymous Tool execution is also disabled until rate-limit, quota, and abuse-control contracts exist.

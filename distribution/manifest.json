@@ -11,8 +11,9 @@
     "themes/favorite.theme.starter", "plugins/favorite.plugin.example", "plugins/favorite.plugin.seo",
     "plugins/favorite.plugin.contact", "plugins/favorite.plugin.sitemap", "plugins/favorite.plugin.analytics",
     "plugins/favorite.plugin.ocr", "plugins/favorite.plugin.direct-media", "storage/.gitkeep",
+    "scripts/start-local-cms.ps1", "scripts/install-local-cms-autostart.ps1",
     "docs/distribution.md", "docs/extension-development.md", "docs/application-plugin-foundation.md",
-    "docs/tool-worker-and-extension-guide.md", "docs/runbooks"
+    "docs/tool-worker-and-extension-guide.md", "docs/vps-and-local-hosting.md", "docs/runbooks"
   ],
   "must_not_ship": [
     ".git", ".github", ".venv", "node_modules", ".next", "__pycache__", "*.pyc",

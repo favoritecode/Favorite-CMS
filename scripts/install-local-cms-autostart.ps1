@@ -45,7 +45,7 @@ try {
         -Trigger $trigger `
         -Principal $principal `
         -Settings $settings `
-        -Description "Starts the Favorite CMS backend on 127.0.0.1:8020, waits for readiness, then starts the Next.js Admin on 127.0.0.1:3010."
+        -Description "Starts the optional configured Tool Worker, Favorite CMS backend on 127.0.0.1:8020, and Next.js Admin on 127.0.0.1:3010."
 
     Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
     Write-Host "Scheduled Task '$TaskName' was created or updated for $currentUser."

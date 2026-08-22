@@ -16,11 +16,15 @@ $BackendStdoutLog = Join-Path $LogDir "backend.log"
 $BackendStderrLog = Join-Path $LogDir "backend-error.log"
 $FrontendStdoutLog = Join-Path $LogDir "frontend.log"
 $FrontendStderrLog = Join-Path $LogDir "frontend-error.log"
+$WorkerStdoutLog = Join-Path $LogDir "worker.log"
+$WorkerStderrLog = Join-Path $LogDir "worker-error.log"
 
 $BackendHost = "127.0.0.1"
 $BackendPort = 8020
 $FrontendHost = "127.0.0.1"
 $FrontendPort = 3010
+$WorkerHost = "127.0.0.1"
+$WorkerPort = 8060
 $BackendBaseUrl = "http://${BackendHost}:${BackendPort}"
 $BackendLiveUrl = "$BackendBaseUrl/health/live"
 $BackendReadyUrl = "$BackendBaseUrl/health/ready"
@@ -228,6 +232,43 @@ function Test-FavoriteFrontend {
     )
 }
 
+function Test-FavoriteWorker {
+    if ([string]::IsNullOrWhiteSpace($env:FAVORITE_TOOL_WORKER_URL) -or [string]::IsNullOrWhiteSpace($env:FAVORITE_TOOL_WORKER_TOKEN)) {
+        return $false
+    }
+
+    try {
+        $response = Invoke-RestMethod `
+            -Uri "$($env:FAVORITE_TOOL_WORKER_URL.TrimEnd('/'))/v1/health" `
+            -Headers @{ Authorization = "Bearer $env:FAVORITE_TOOL_WORKER_TOKEN" } `
+            -TimeoutSec 3
+        return $response.status -eq "healthy"
+    }
+    catch {
+        return $false
+    }
+}
+
+function Wait-FavoriteWorker {
+    param(
+        [System.Diagnostics.Process]$StartedProcess,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($null -ne $StartedProcess) {
+            $StartedProcess.Refresh()
+            if ($StartedProcess.HasExited) {
+                Stop-WithError "Tool Worker exited with code $($StartedProcess.ExitCode). See $WorkerStderrLog."
+            }
+        }
+        if (Test-FavoriteWorker) { return }
+        Start-Sleep -Seconds 1
+    }
+    Stop-WithError "Tool Worker did not become healthy within $TimeoutSeconds seconds. See $WorkerStderrLog."
+}
+
 function Wait-FavoriteFrontend {
     param(
         [System.Diagnostics.Process]$StartedProcess,
@@ -285,6 +326,40 @@ try {
 
     # This process-only value wires the Next.js server to the backend without modifying .env.
     $env:FAVORITE_API_URL = $BackendBaseUrl
+
+    $workerConfigured = -not [string]::IsNullOrWhiteSpace($env:FAVORITE_TOOL_WORKER_URL) -and
+        -not [string]::IsNullOrWhiteSpace($env:FAVORITE_TOOL_WORKER_TOKEN)
+    if ($workerConfigured) {
+        $workerUri = [Uri]$env:FAVORITE_TOOL_WORKER_URL
+        $workerIsLocal = $workerUri.Scheme -eq "http" -and $workerUri.Host -eq $WorkerHost -and $workerUri.Port -eq $WorkerPort
+        $workerProcess = $null
+        if (Test-FavoriteWorker) {
+            Write-StartupLog "Reusing the configured Favorite Tool Worker."
+        }
+        elseif (-not $workerIsLocal) {
+            Stop-WithError "The configured external Tool Worker is unavailable."
+        }
+        else {
+            $workerListeners = @(Get-PortListeners -Port $WorkerPort)
+            if ($workerListeners.Count -gt 0) {
+                Stop-WithError "Port $WorkerPort is occupied, but the configured Favorite Tool Worker is not healthy. No process was stopped."
+            }
+            Write-StartupLog "Starting the configured Favorite Tool Worker on $WorkerHost`:$WorkerPort."
+            $workerProcess = Start-Process `
+                -FilePath $PythonExe `
+                -ArgumentList @("-m", "uvicorn", "favorite_worker.app:create_app", "--factory", "--host", $WorkerHost, "--port", "$WorkerPort") `
+                -WorkingDirectory $ProjectRoot `
+                -RedirectStandardOutput $WorkerStdoutLog `
+                -RedirectStandardError $WorkerStderrLog `
+                -WindowStyle Hidden `
+                -PassThru
+        }
+        Wait-FavoriteWorker -StartedProcess $workerProcess
+        Write-StartupLog "Tool Worker is healthy."
+    }
+    else {
+        Write-StartupLog "Tool Worker is not configured; Tool operations remain safely unavailable."
+    }
 
     $backendProcess = $null
     $backendListeners = @(Get-PortListeners -Port $BackendPort)
