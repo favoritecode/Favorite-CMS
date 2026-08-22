@@ -24,6 +24,10 @@ def test_worker_transport_requires_bearer_and_supports_only_fixed_tools(worker, 
     configuration, engine = worker
     monkeypatch.setattr("favorite_worker.engine._fetch", lambda url, config: (b"image", "image/png", "sample.png"))
     client = TestClient(create_app(configuration, engine)); headers = {"authorization": f"Bearer {configuration.token}"}
+    assert client.get("/").json() == {
+        "service": "Favorite CMS Tool Worker", "status": "running",
+        "authentication": "required for Worker operations", "health": "/v1/health",
+    }
     assert client.get("/v1/health").status_code == 401
     assert client.get("/v1/health", headers=headers).json() == {"status": "healthy"}
     unknown = client.post("/v1/jobs", headers=headers, json={"tool_id": "favorite.tool.unknown", "job_id": str(uuid4()), "input": {"url": "https://media.example.test/x"}})

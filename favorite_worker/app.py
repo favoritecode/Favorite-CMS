@@ -27,6 +27,16 @@ def create_app(configuration: WorkerConfiguration | None = None, engine: WorkerE
         yield
         worker.shutdown()
     application = FastAPI(title="Favorite CMS Tool Worker", version="0.1.0", lifespan=lifespan)
+
+    @application.get("/")
+    def information():
+        return {
+            "service": "Favorite CMS Tool Worker",
+            "status": "running",
+            "authentication": "required for Worker operations",
+            "health": "/v1/health",
+        }
+
     def authorize(authorization: str | None = Header(default=None)) -> None:
         expected = f"Bearer {configured.token}"
         if authorization is None or not compare_digest(authorization, expected): raise HTTPException(401, "Worker authentication required")
