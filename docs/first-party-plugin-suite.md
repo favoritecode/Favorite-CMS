@@ -10,7 +10,9 @@ select Python modules, callables, services, scripts, filesystem paths, or provid
 ## Favorite SEO
 
 Provides Plugin-scoped site title, meta description, canonical base, robots, and
-safe Open Graph metadata. Rendering applies the contribution through an
+safe Open Graph metadata. Authorized Content editors can also set a bounded
+per-content SEO title and meta description through the Content-owned SEO contract;
+empty values retain the Content-title/body fallbacks. Rendering applies the contribution through an
 owner-scoped decorator and removes it on deactivation. Canonical input accepts only
 credential-free HTTP(S) origins. Per-content SEO editing is not implemented because
 SEO Engine reserves resource/plugin contributions for the registered Content owner;

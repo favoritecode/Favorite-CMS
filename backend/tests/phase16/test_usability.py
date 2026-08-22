@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from uuid import uuid4
 
 from backend.main import create_app
 from backend.tests.e2e_app import PASSWORD, seed
@@ -45,3 +46,36 @@ def test_content_edit_publish_delete_and_media_listing_use_engine_contracts() ->
         assert "storage" not in str(listing).lower()
         deleted = client.request("DELETE", "/admin/api/content", headers=headers, json={"id": content_id})
         assert deleted.status_code == 200 and deleted.json()["data"] == {"deleted": True}
+
+
+def test_featured_image_is_content_owned_validated_and_rendered_safely() -> None:
+    with TestClient(create_app(on_started=seed)) as client:
+        headers = _login(client)
+        slug = f"featured-post-{uuid4().hex}"
+        invalid = client.post("/admin/api/content", headers=headers, json={
+            "type_id": "post", "title": "Unsafe image", "data": {
+                "slug": "unsafe-featured-image", "body": "Body", "featured_image": "javascript:alert(1)"
+            },
+        })
+        assert invalid.status_code == 400
+
+        created = client.post("/admin/api/content", headers=headers, json={
+            "type_id": "post", "title": "Featured post", "data": {
+                "slug": slug, "body": "Safe article body",
+                "featured_image": "https://images.example.test/cover.jpg?size=large&mode=safe",
+            },
+        })
+        assert created.status_code == 200
+        content_id = created.json()["data"]["id"]
+        published = client.patch("/admin/api/content", headers=headers, json={
+            "id": content_id, "title": "Featured post", "data": created.json()["data"]["data"],
+            "action": "publish",
+        })
+        assert published.status_code == 200
+        preview = client.post("/admin/api/content/preview", headers=headers, json={
+            "title": "Featured post", "data": published.json()["data"]["data"],
+        })
+        assert preview.status_code == 200
+        markup = preview.json()["data"]["html"]
+        assert 'src="https://images.example.test/cover.jpg?size=large&amp;mode=safe"' in markup
+        assert "javascript:" not in markup

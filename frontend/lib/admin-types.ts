@@ -1,4 +1,4 @@
-export type AdminSection = "dashboard" | "posts" | "pages" | "media" | "themes" | "menus" | "plugins" | "users" | "settings" | "diagnostics";
+export type AdminSection = "dashboard" | "posts" | "pages" | "media" | "themes" | "menus" | "plugins" | "users" | "roles" | "settings" | "diagnostics";
 
 export type AdminModule = {
   id: string;
@@ -11,7 +11,7 @@ export type ContentItem = {
   id: string;
   type: string;
   title: string;
-  data: { slug?: string; body?: string };
+  data: { slug?: string; body?: string; featured_image?: string };
   state: "draft" | "published" | "archived" | string;
 };
 
@@ -26,7 +26,7 @@ export type ContentCapabilities = {
 
 export type ContentPreview = {
   title: string;
-  data: { slug: string; body: string };
+  data: { slug: string; body: string; featured_image?: string };
   html: string;
 };
 
@@ -54,7 +54,13 @@ export type ExtensionItem = {
   optional_dependencies: Record<string, string>;
   permissions: string[];
   granted_permissions: string[];
+  package_managed: boolean;
 };
+
+export type UserItem = { id: string; email: string; display_name: string; state: string; roles: string[]; permissions: string[] };
+export type RoleItem = { id: string; name: string; built_in: boolean; permissions: string[]; users: number };
+export type PermissionItem = { id: string; owner: string; action: string; resource_type: string; group: string };
+export type RoleAdministration = { roles: RoleItem[]; permissions: PermissionItem[] };
 
 export type Operations = {
   version: string;

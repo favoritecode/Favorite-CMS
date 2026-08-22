@@ -5,7 +5,7 @@
   "frontend_model": "source-build",
   "must_ship": [
     ".env.production.example", "LICENSE", "README.md", "pyproject.toml",
-    "backend", "frontend/app", "frontend/lib", "frontend/public",
+    "backend", "frontend/app", "frontend/components", "frontend/lib", "frontend/public",
     "frontend/package.json", "frontend/pnpm-lock.yaml", "frontend/pnpm-workspace.yaml",
     "frontend/next.config.ts", "frontend/postcss.config.mjs", "frontend/tsconfig.json",
     "themes/favorite.theme.starter", "plugins/favorite.plugin.example", "plugins/favorite.plugin.seo",

@@ -7,12 +7,12 @@ async function login(page: import("@playwright/test").Page, email: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Admin dashboard" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
 }
 
 test("unauthenticated Admin navigation is denied by the real session boundary", async ({ page }) => {
   await page.goto("/admin");
-  await expect(page.getByRole("heading", { name: "Admin sign in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in to Admin" })).toBeVisible();
 });
 
 test("real Admin login, explicit Permission navigation, cookie safety, and logout revocation", async ({ page, context }) => {
@@ -25,16 +25,19 @@ test("real Admin login, explicit Permission navigation, cookie safety, and logou
   expect(session?.sameSite).toBe("Strict");
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
   await expect(page.locator("body")).not.toContainText(password);
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("heading", { name: "Admin sign in" })).toBeVisible();
+  await page.getByRole("button", { name: "Account" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in to Admin" })).toBeVisible();
   expect((await context.cookies()).some(cookie => cookie.name === "favorite_admin_session")).toBe(false);
   await page.goto("/admin");
-  await expect(page.getByRole("heading", { name: "Admin sign in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in to Admin" })).toBeVisible();
 });
 
 test("authenticated but unauthorized Admin receives an empty permission-filtered workspace", async ({ page }) => {
   await login(page, "viewer@example.test");
-  await expect(page.getByText("No management modules are available for this account.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Users" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Roles & permissions" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Test management" })).toHaveCount(0);
 });
 

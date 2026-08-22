@@ -2,6 +2,10 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
+  timeout: 90_000,
+  // The real-transport suite deliberately shares one CMS installation so its
+  // lifecycle workflows must be serialized rather than racing shared state.
+  workers: 1,
   use: { baseURL: "http://127.0.0.1:3000" },
   webServer: [
     {

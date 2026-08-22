@@ -7,6 +7,7 @@ import { DiagnosticsSection } from "@/components/admin/diagnostics-section";
 import { ExtensionsSection } from "@/components/admin/extensions-section";
 import { MediaSection } from "@/components/admin/media-section";
 import { SettingsSection } from "@/components/admin/settings-section";
+import { UsersSection, RolesSection } from "@/components/admin/administration-section";
 import type { AdminSection } from "@/lib/admin-types";
 
 const details: Record<Exclude<AdminSection, "dashboard">, { title: string; description: string }> = {
@@ -17,6 +18,7 @@ const details: Record<Exclude<AdminSection, "dashboard">, { title: string; descr
   menus: { title: "Menus", description: "Navigation structures and presentation assignments." },
   plugins: { title: "Plugins", description: "Manage plugin lifecycle, declared capabilities, dependencies, and owned settings." },
   users: { title: "Users", description: "Accounts, roles, and status under the explicit identity permission model." },
+  roles: { title: "Roles & permissions", description: "Manage transparent role membership and explicit PermissionEngine grants." },
   settings: { title: "Settings", description: "Update platform-owned site settings without exposing infrastructure configuration." },
   diagnostics: { title: "Diagnostics", description: "Authorized, redacted operational health across Favorite CMS engines and providers." },
 };
@@ -30,7 +32,8 @@ export function ManagementConsole({ section }: { section: Exclude<AdminSection, 
     {section === "themes" && <ExtensionsSection kind="theme" />}
     {section === "menus" && <MissingContract title="Menu administration is not exposed yet" detail="MenuEngine supports internal menu, location, assignment, and item operations, but the backend does not provide an authorized Admin API or listing contract. No menu data has been fabricated." />}
     {section === "plugins" && <ExtensionsSection kind="plugin" />}
-    {section === "users" && <MissingContract title="User administration is not exposed yet" detail="UserEngine supports individual identity operations, but it has no safe list operation, Admin API, or Admin permission module. No account data or credentials are exposed." />}
+    {section === "users" && <UsersSection />}
+    {section === "roles" && <RolesSection />}
     {section === "settings" && <SettingsSection />}
     {section === "diagnostics" && <DiagnosticsSection />}
   </AdminFrame>;

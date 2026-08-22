@@ -25,9 +25,13 @@ def data_kernel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Ker
         "platform.user.001", "platform.authentication.001", "platform.content.001",
             "platform.media.001", "platform.settings.001", "platform.menu.001", "platform.seo.001",
         "platform.update.001",
-        "platform.installation.001",
-        "platform.permission.001",
-    }
+            "platform.installation.001",
+            "platform.permission.001",
+            "platform.user.002",
+            "platform.permission.002",
+            "platform.audit.001",
+            "platform.extension_package.001",
+        }
     assert migrations.upgrade() == ()
     yield kernel
     kernel.shutdown()

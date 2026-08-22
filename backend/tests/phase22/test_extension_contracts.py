@@ -45,13 +45,14 @@ def test_content_owned_seo_projection_is_safe_and_public_only(phase7_kernel) -> 
     item = content.create("page", title='<Unsafe "Title">', data={"slug": "seo-page", "body": "Default body"},
                           metadata={}, authentication=context)
     content.set_seo_metadata(item.content_id, ContentSeoMetadata(
-        description='<script>alert("x")</script>', canonical_path=f"/site/content/{item.content_id}",
+        title="Search result title", description='<script>alert("x")</script>', canonical_path=f"/site/content/{item.content_id}",
         robots="noindex,nofollow", open_graph_title='OG <Title>',
         open_graph_description='OG "Description"', open_graph_image="/media/preview.png"), context)
     assert content.seo_projection(item.content_id, public_origin="https://example.test") is None
     content.publish(item.content_id, context)
     projection = content.seo_projection(item.content_id, public_origin="https://example.test")
     assert projection and projection.canonical == f"https://example.test/site/content/{item.content_id}"
+    assert projection.title == "Search result title"
     assert projection.open_graph_image == "https://example.test/media/preview.png"
     with pytest.raises(InvalidContent):
         content.seo_projection(item.content_id, public_origin="file:///private")
@@ -74,13 +75,14 @@ def test_seo_plugin_consumes_projection_and_escapes_output(phase7_kernel) -> Non
                           body={"site_title": "Site", "description": "", "canonical_base": "https://example.test", "robots": "index,follow"})
     assert response.status == 200
     response = api.handle(routing.resolve("PATCH", "/api/plugins/seo/content"), credential=credential,
-                          body={"content_id": item.content_id, "metadata": {"description": "A & B", "canonical_path": "",
+                          body={"content_id": item.content_id, "metadata": {"title": "SEO <Title>", "description": "A & B", "canonical_path": "",
                               "robots": "index,follow", "open_graph_title": 'A "title"',
                               "open_graph_description": "A <description>", "open_graph_image": ""}})
     assert response.status == 200
     html = phase7_kernel.container.resolve("engine.rendering", RenderingEngine).render(
         routing.resolve("GET", f"/site/content/{item.content_id}")).body
     assert 'content="A &amp; B"' in html and 'content="A &quot;title&quot;"' in html
+    assert "<title>SEO &lt;Title&gt;</title>" in html
     assert "<description>" not in html
 
 

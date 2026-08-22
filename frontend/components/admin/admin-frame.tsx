@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Activity, Blocks, ChevronDown, Files, Gauge, Image as ImageIcon, LockKeyhole, LogOut, Menu, Navigation, Newspaper, Palette, Settings, UserRound, Users, X } from "lucide-react";
+import { Activity, Blocks, ChevronDown, Files, Gauge, Image as ImageIcon, LockKeyhole, LogOut, Menu, Navigation, Newspaper, Palette, Settings, ShieldCheck, UserRound, Users, X } from "lucide-react";
 import { adminRequest, isAuthenticationError } from "@/lib/admin-client";
 import type { AdminModule, AdminSection } from "@/lib/admin-types";
 import { ToastProvider } from "./admin-ui";
@@ -26,6 +26,7 @@ const navigation: { label: string; items: NavigationItem[] }[] = [
   ] },
   { label: "System", items: [
     { id: "users", label: "Users", href: "/admin/users", icon: Users, module: "admin.users" },
+    { id: "roles", label: "Roles & permissions", href: "/admin/roles", icon: ShieldCheck, module: "admin.roles" },
     { id: "settings", label: "Settings", href: "/admin/settings", icon: Settings, module: "admin.settings" },
     { id: "diagnostics", label: "Diagnostics", href: "/admin/diagnostics", icon: Activity, module: "admin.diagnostics" },
   ] },
@@ -50,6 +51,8 @@ export function AdminFrame({ section, title, description, actions, children }: {
 
   useEffect(() => setMobileOpen(false), [section]);
   const availableModules = useMemo(() => new Set(modules.map(module => module.id)), [modules]);
+  const declaredModules = useMemo(() => new Set(navigation.flatMap(group => group.items.flatMap(item => item.module ? [item.module] : []))), []);
+  const contributedModules = useMemo(() => modules.filter(module => !declaredModules.has(module.id)), [declaredModules, modules]);
 
   async function signOut() {
     setSigningOut(true);
@@ -60,15 +63,20 @@ export function AdminFrame({ section, title, description, actions, children }: {
   const nav = <nav aria-label="Administration" className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-4">
     {navigation.map(group => <div key={group.label}>
       <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase text-slate-500">{group.label}</p>
-      <div className="space-y-1">{group.items.map(item => {
+      <div className="space-y-1">{group.items.filter(item => item.module === undefined || availableModules.has(item.module)).map(item => {
         const Icon = item.icon;
         const current = section === item.id;
-        const restricted = item.module !== undefined && !availableModules.has(item.module);
-        return <Link key={item.id} href={item.href} aria-current={current ? "page" : undefined} title={restricted ? `${item.label}: unavailable for this account or not exposed by the backend` : undefined} className={`flex min-h-10 items-center gap-3 rounded-md px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-400 ${current ? "bg-white text-slate-950 shadow-sm" : "text-slate-300 hover:bg-slate-800 hover:text-white"}`}>
-          <Icon className="size-[18px] shrink-0" /><span className="min-w-0 flex-1 truncate">{item.label}</span>{restricted && <LockKeyhole className="size-3.5 shrink-0 text-slate-500" aria-label="Restricted" />}
+        return <Link key={item.id} href={item.href} aria-current={current ? "page" : undefined} className={`flex min-h-10 items-center gap-3 rounded-md px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-400 ${current ? "bg-white text-slate-950 shadow-sm" : "text-slate-300 hover:bg-slate-800 hover:text-white"}`}>
+          <Icon className="size-[18px] shrink-0" /><span className="min-w-0 flex-1 truncate">{item.label}</span>
         </Link>;
       })}</div>
     </div>)}
+    {contributedModules.length > 0 && <div>
+      <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase text-slate-500">Modules</p>
+      <div className="space-y-1">{contributedModules.map(module => <Link key={module.id} href={module.destination} className="flex min-h-10 items-center gap-3 rounded-md px-3 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <LockKeyhole className="size-[18px] shrink-0" /><span className="min-w-0 flex-1 truncate">{module.label}</span>
+      </Link>)}</div>
+    </div>}
   </nav>;
 
   return <ToastProvider><div className="min-h-screen bg-slate-100 text-slate-950">
@@ -95,7 +103,7 @@ export function AdminFrame({ section, title, description, actions, children }: {
           <button type="button" title="Open menu" aria-label="Open menu" onClick={() => setMobileOpen(true)} className="rounded-md border border-slate-300 p-2 text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-600 md:hidden"><Menu className="size-5" /></button>
           <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium text-slate-500">Administration <span aria-hidden="true">/</span> <span className="text-slate-700">{title}</span></p></div>
           <div className="relative">
-            <button type="button" aria-haspopup="menu" aria-expanded={accountOpen} onClick={() => setAccountOpen(value => !value)} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-600">
+            <button type="button" aria-label="Account" aria-haspopup="menu" aria-expanded={accountOpen} onClick={() => setAccountOpen(value => !value)} className="flex min-h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-600">
               <UserRound className="size-4" /><span className="hidden sm:inline">Account</span><ChevronDown className="size-4" />
             </button>
             {accountOpen && <div role="menu" className="absolute right-0 mt-2 w-56 rounded-md border border-slate-200 bg-white p-1.5 shadow-xl">

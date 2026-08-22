@@ -59,6 +59,15 @@ function StatusSummary({ status }: { status: Record<string, unknown> }) {
 }
 
 function cleanPayload(pluginId: string, value: Record<string, unknown>): Record<string, unknown> {
+  if (pluginId === "favorite.plugin.example") return { message: value.message ?? "" };
+  if (pluginId === "favorite.plugin.seo") return {
+    site_title: value.site_title ?? "",
+    description: value.description ?? "",
+    canonical_base: value.canonical_base ?? "",
+    robots: value.robots ?? "index,follow",
+  };
   if (pluginId === "favorite.plugin.contact") return { recipient: value.recipient ?? "", delivery: value.delivery ?? "pending" };
-  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "status"));
+  if (pluginId === "favorite.plugin.sitemap") return { base_url: value.base_url ?? "" };
+  if (pluginId === "favorite.plugin.analytics") return { provider: value.provider ?? "none", site_id: value.site_id ?? "" };
+  return {};
 }

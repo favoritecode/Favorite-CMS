@@ -97,6 +97,7 @@ class ContentQuery:
 @dataclass(frozen=True)
 class ContentSeoMetadata:
     """Content-owned, presentation-safe SEO fields available to approved consumers."""
+    title: str = ""
     description: str = ""
     canonical_path: str = ""
     robots: str = "index,follow"
@@ -253,7 +254,7 @@ class ContentEngine:
         image = origin + metadata.open_graph_image if metadata.open_graph_image else ""
         description = metadata.description or default_description
         return ContentSeoProjection(
-            current.content_id, current.title, description, canonical, metadata.robots,
+            current.content_id, metadata.title or current.title, description, canonical, metadata.robots,
             metadata.open_graph_title or current.title,
             metadata.open_graph_description or description, image,
         )
@@ -353,16 +354,18 @@ def _public_origin(value: str) -> str:
 def _seo_metadata(value: object) -> ContentSeoMetadata:
     if value in ({}, None): return ContentSeoMetadata()
     if not isinstance(value, Mapping): raise InvalidContent("Content SEO metadata is invalid")
-    expected = {"description", "canonical_path", "robots", "open_graph_title",
+    expected = {"title", "description", "canonical_path", "robots", "open_graph_title",
                 "open_graph_description", "open_graph_image"}
-    if set(value) != expected or any(not isinstance(value[key], str) for key in expected):
+    legacy = expected - {"title"}
+    if frozenset(value) not in {frozenset(expected), frozenset(legacy)} or any(not isinstance(value[key], str) for key in value):
         raise InvalidContent("Content SEO metadata is invalid")
-    return ContentSeoMetadata(**{key: str(value[key]) for key in expected})
+    return ContentSeoMetadata(**{key: str(value.get(key, "")) for key in expected})
 
 
 def _seo_values(value: ContentSeoMetadata) -> dict[str, str]:
     if not isinstance(value, ContentSeoMetadata): raise InvalidContent("Content SEO metadata is invalid")
     result = {
+        "title": _optional_text(value.title, "SEO title", 120),
         "description": _optional_text(value.description, "SEO description", 320),
         "canonical_path": _optional_text(value.canonical_path, "SEO canonical path", 500),
         "robots": value.robots,

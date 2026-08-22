@@ -116,6 +116,34 @@ class PluginEngine:
         self.bind(extension_id, load_first_party_runtime(package, extension_id),
                   granted_permissions=granted_permissions)
 
+    def install_declarative_package(self, manifest: ExtensionManifest, package: Path) -> None:
+        """Register an already validated data-only package; never import package code."""
+        if manifest.type is not ExtensionType.PLUGIN:
+            raise ManifestValidationError("Extension is not a Plugin")
+        self._manager_required().register(manifest)
+        self._packages[manifest.id] = package
+
+    def bind_uploaded_declarative(self, extension_id: str, *, granted_permissions: frozenset[str]) -> None:
+        if extension_id in self._bound: return
+        self.bind(extension_id, _DeclarativeUploadedRuntime(), granted_permissions=granted_permissions)
+
+    def uninstall(self, extension_id: str) -> None:
+        if self._manager_required().state(extension_id) is ExtensionState.ENABLED:
+            raise ManifestValidationError("An active Plugin cannot be uninstalled")
+        self._cleanup_phase7(extension_id)
+        self._manager_required().remove(extension_id)
+        self._packages.pop(extension_id, None); self._bound.discard(extension_id); self._grants.pop(extension_id, None)
+
+    def update_uploaded_declarative(self, extension_id: str, manifest: ExtensionManifest, package: Path,
+                                    *, granted_permissions: frozenset[str]) -> bool:
+        if manifest.type is not ExtensionType.PLUGIN or not set(manifest.permissions).issubset(granted_permissions):
+            return False
+        context = PluginContext(extension_id, granted_permissions, self._services)
+        result = self._manager_required().replace(extension_id, manifest, _BoundRuntime(_DeclarativeUploadedRuntime(), context))
+        if result:
+            self._packages[extension_id] = package; self._bound.add(extension_id); self._grants[extension_id] = granted_permissions
+        return result
+
     def is_bound(self, extension_id: str) -> bool:
         self._plugin_manifest(extension_id)
         return extension_id in self._bound
@@ -179,3 +207,11 @@ class PluginEngine:
             service = self._public_services.get(name)
             if service is not None:
                 service.unregister_owner(owner)  # type: ignore[attr-defined]
+
+
+class _DeclarativeUploadedRuntime:
+    """No-code runtime for uploaded declarative Plugin packages."""
+    def register(self, context: PluginContext) -> None: self._context = context
+    def activate(self) -> None: pass
+    def deactivate(self) -> None: pass
+    def unregister(self) -> None: pass

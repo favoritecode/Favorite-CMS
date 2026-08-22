@@ -28,6 +28,7 @@ export function ArticleEditor({ value, onChange, disabled = false }: {
   const editor = useEditor({
     immediatelyRender: false,
     editable: !disabled,
+    editorProps: { attributes: { "aria-label": "Body", role: "textbox" } },
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },

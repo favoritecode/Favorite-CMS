@@ -100,6 +100,20 @@ class ThemeEngine:
         self._manager_required().attach_runtime(extension_id, _BoundTheme(runtime, package))
         self._packages[extension_id] = package
 
+    def install_package(self, manifest: ExtensionManifest, package: ThemePackage) -> None:
+        if manifest.type is not ExtensionType.THEME:
+            raise ManifestValidationError("Extension is not a Theme")
+        package.validate()
+        self._manager_required().register(manifest)
+        self.bind(manifest.id, package, _ResourceThemeRuntime())
+
+    def uninstall(self, extension_id: str) -> None:
+        if extension_id == self._active:
+            raise ManifestValidationError("The active Theme cannot be uninstalled")
+        self._theme_manifest(extension_id)
+        self._manager_required().remove(extension_id)
+        self._packages.pop(extension_id, None)
+
     def activate(self, extension_id: str) -> bool:
         manifest = self._theme_manifest(extension_id)
         if extension_id not in self._packages:

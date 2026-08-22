@@ -2,18 +2,26 @@
 from __future__ import annotations
 
 from html import escape
+import base64
+import binascii
 from typing import Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from backend.admin.engine import AdminEngine, AdminModule
 from backend.admin.article import article_text, normalize_slug, sanitize_article_html, valid_slug
 from backend.core.container import ServiceContainer
-from backend.core.extensions import ExtensionManager
+from backend.core.extensions import ExtensionManager, ManifestValidationError
 from backend.engines.api import APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
 from backend.engines.content import ContentEngine, ContentField, ContentQuery, ContentState, ContentType, FieldKind
 from backend.engines.localization import Language, Locale, LocalizationEngine, TranslationResource
 from backend.engines.media import MediaAccessContract, MediaEngine, MediaType
 from backend.engines.permissions import AuthorizationContext, PermissionDefinition, PermissionEngine
+from backend.engines.permissions import RoleDefinition, RoleGrant
+from backend.engines.users import AccountState, UserEngine
+from backend.engines.authentication import AuthenticationEngine
+from backend.engines.audit import AuditEngine
+from backend.engines.extension_packages import ExtensionPackageEngine, PackageError
+from backend.core.extensions import ExtensionType
 from backend.engines.plugins import PluginEngine
 from backend.engines.rendering import PresentationOperation, RenderResource, RenderResourceNotFound, RenderingEngine, ResourceKind, ResourceOrigin
 from backend.engines.routing import RouteDefinition, RouteType, RoutingEngine
@@ -25,15 +33,19 @@ from backend.operations.health import HealthEngine
 OWNER = "application.admin.platform"
 PERMISSIONS = {"content": "admin.content.manage", "media": "admin.media.manage",
                "settings": "admin.settings.manage", "extensions": "admin.extensions.manage",
+               "users": "admin.users.manage", "roles": "admin.roles.manage",
                "diagnostics": "admin.diagnostics.view"}
 CONTENT_PERMISSIONS = {action: f"platform.content.{action}" for action in ("create", "read", "update", "delete", "publish", "archive")}
 MEDIA_PERMISSIONS = {action: f"platform.media.{action}" for action in ("create", "read", "update", "delete")}
 SETTING_PERMISSIONS = {"read": "platform.setting.read", "write": "platform.setting.write"}
+USER_PERMISSIONS = {action: f"platform.user.{action}" for action in ("create", "read", "update", "disable", "reset_password", "assign_roles")}
+ROLE_PERMISSIONS = {action: f"platform.role.{action}" for action in ("create", "read", "update", "delete", "assign_permissions")}
+EXTENSION_PERMISSIONS = {action: f"platform.extension.{action}" for action in ("install", "activate", "deactivate", "update", "uninstall")}
 
 
 class AdminPlatformEngine:
     engine_id = "admin_platform"
-    dependencies = ("admin", "content", "media", "settings", "search", "localization", "plugins", "themes", "observability", "rendering")
+    dependencies = ("admin", "content", "media", "settings", "search", "localization", "plugins", "themes", "extension_packages", "audit", "observability", "rendering")
     def __init__(self) -> None: self._container: ServiceContainer | None = None; self.ready = False
     def initialize(self, container: ServiceContainer) -> None:
         self._container = container; container.register("application.admin.platform", self)
@@ -46,6 +58,7 @@ class AdminPlatformEngine:
         admin = self._service("application.admin", AdminEngine)
         destinations = {"content": "/admin/pages", "media": "/admin/media",
                         "settings": "/admin/settings", "extensions": "/admin/themes",
+                        "users": "/admin/users", "roles": "/admin/roles",
                         "diagnostics": "/admin/diagnostics"}
         for order, (area, permission_id) in enumerate(PERMISSIONS.items(), 10):
             action = "view" if area == "diagnostics" else "manage"
@@ -57,6 +70,8 @@ class AdminPlatformEngine:
         self._register(api, "media", "/admin/api/media", ("GET", "POST"), self._media, "media")
         self._register(api, "settings", "/admin/api/settings", ("GET", "PATCH"), self._settings, "settings")
         self._register(api, "extensions", "/admin/api/extensions", ("GET", "POST"), self._extensions, "extensions")
+        self._register(api, "users", "/admin/api/users", ("GET", "POST", "PATCH"), self._users, "users")
+        self._register(api, "roles", "/admin/api/roles", ("GET", "POST", "PATCH", "DELETE"), self._roles, "roles")
         self._register(api, "diagnostics", "/admin/api/diagnostics", ("GET",), self._diagnostics, "diagnostics")
         api.register(RouteDefinition("admin.platform.dashboard", OWNER, RouteType.API, "/admin/api/dashboard", ("GET",),
                                      "admin.platform.dashboard", authentication_required=True),
@@ -76,6 +91,7 @@ class AdminPlatformEngine:
         rendering.register_operation(PresentationOperation("platform.public.page", OWNER, self._public_page, **presentation))
         rendering.register_operation(PresentationOperation("platform.public.content", OWNER, self._public_content, **presentation))
         rendering.register_operation(PresentationOperation("platform.public.search", OWNER, self._public_search, **presentation))
+        self._ensure_site_owner(permissions)
         self.ready = True
     def shutdown(self) -> None: self.ready = False
     def _register(self, api: APIEngine, name: str, path: str, methods: tuple[str, ...], handler, area: str) -> None:
@@ -117,7 +133,8 @@ class AdminPlatformEngine:
         if not isinstance(data, dict) or set(data) != {"title", "data"}:
             raise APIValidationError("Content preview request is invalid")
         title, content_data = _content_authoring_input(data["title"], data["data"])
-        model = {"view": "detail", "title": title, "body": content_data["body"], "published_at": ""}
+        model = {"view": "detail", "title": title, "body": content_data["body"],
+                 "featured_image": content_data["featured_image"], "published_at": ""}
         return {"title": title, "data": dict(content_data), "html": _view_markup(model)}
     def _content_capabilities(self, request: APIRequest, data: object) -> object:
         permissions = self._service("engine.permissions", PermissionEngine)
@@ -156,21 +173,116 @@ class AdminPlatformEngine:
     def _extensions(self, request: APIRequest, data: object) -> object:
         manager = self._service("core.extensions", ExtensionManager)
         if request.route.method == "POST":
-            if not isinstance(data, dict) or set(data) - {"type", "id", "action", "granted_permissions"} or not {"type", "id", "action"}.issubset(data): raise APIValidationError("Extension request is invalid")
-            kind, identifier, action = str(data["type"]), str(data["id"]), str(data["action"])
+            if not isinstance(data, dict) or set(data) - {"type", "id", "action", "granted_permissions", "archive"} or not {"type", "action"}.issubset(data): raise APIValidationError("Extension request is invalid")
+            kind, identifier, action = str(data["type"]), str(data.get("id", "")), str(data["action"])
             engine = self._service("engine.plugins", PluginEngine) if kind == "plugin" else self._service("engine.themes", ThemeEngine) if kind == "theme" else None
-            if engine is None or action not in {"activate", "deactivate"}: raise APIValidationError("Extension request is invalid")
+            if engine is None or action not in EXTENSION_PERMISSIONS: raise APIValidationError("Extension request is invalid")
+            self._require_action(EXTENSION_PERMISSIONS[action], action, "extension_package", request)
+            if action in {"install", "update"}:
+                archive = data.get("archive")
+                if not isinstance(archive, str): raise APIValidationError("Extension archive is required")
+                try: package = base64.b64decode(archive, validate=True)
+                except (ValueError, binascii.Error) as exc: raise APIValidationError("Extension archive encoding is invalid") from exc
+                packages = self._service("engine.extension_packages", ExtensionPackageEngine)
+                result = packages.install(package, expected_type=ExtensionType(kind)) if action == "install" else packages.update(identifier, package)
+                identifier = result.extension_id
+                if kind == "theme":
+                    rendering = self._service("engine.rendering", RenderingEngine)
+                    if action == "update": rendering.unregister_owner(identifier)
+                    self._register_theme_resources(rendering, identifier)
+                self._audit(request, f"extension.{action}", kind, identifier)
+                return self._extension_list()
+            if action == "uninstall":
+                self._service("engine.extension_packages", ExtensionPackageEngine).uninstall(identifier)
+                if kind == "theme": self._service("engine.rendering", RenderingEngine).unregister_owner(identifier)
+                self._audit(request, "extension.uninstall", kind, identifier)
+                return self._extension_list()
             if kind == "plugin" and action == "activate" and not engine.is_bound(identifier):
                 grants = data.get("granted_permissions")
                 if not isinstance(grants, list) or any(not isinstance(item, str) for item in grants):
                     raise APIValidationError("Plugin capabilities must be granted explicitly")
-                engine.bind_declarative(identifier, granted_permissions=frozenset(grants))
+                try: engine.bind_declarative(identifier, granted_permissions=frozenset(grants))
+                except ManifestValidationError:
+                    engine.bind_uploaded_declarative(identifier, granted_permissions=frozenset(grants))
+            previous_theme = engine.active_theme if kind == "theme" else None
             success = engine.activate(identifier) if action == "activate" else engine.deactivate(identifier)
             if not success: raise APIValidationError("Extension lifecycle operation failed safely")
-        plugins = self._service("engine.plugins", PluginEngine)
-        active_theme = self._service("engine.themes", ThemeEngine).active_theme
-        return [_extension_value(manager, plugins, identifier, active_theme)
-                for identifier in manager.registered()]
+            try:
+                self._service("engine.extension_packages", ExtensionPackageEngine).set_lifecycle(
+                    identifier, extension_type=ExtensionType(kind), active=action == "activate",
+                    granted_permissions=tuple(engine.granted_permissions(identifier)) if kind == "plugin" else ())
+            except Exception as exc:
+                if kind == "theme" and previous_theme is not None: engine.activate(previous_theme)
+                elif action == "activate": engine.deactivate(identifier)
+                else: engine.activate(identifier)
+                raise APIValidationError("Extension lifecycle persistence failed; the previous state was restored") from exc
+            self._audit(request, f"extension.{action}", kind, identifier)
+        return self._extension_list()
+
+    def _extension_list(self) -> object:
+        manager = self._service("core.extensions", ExtensionManager)
+        plugins = self._service("engine.plugins", PluginEngine); active_theme = self._service("engine.themes", ThemeEngine).active_theme
+        managed = self._service("engine.extension_packages", ExtensionPackageEngine).managed_ids()
+        return [_extension_value(manager, plugins, identifier, active_theme, identifier in managed) for identifier in manager.registered()]
+
+    def _users(self, request: APIRequest, data: object) -> object:
+        users = self._service("engine.users", UserEngine)
+        if request.route.method == "GET":
+            self._require_action(USER_PERMISSIONS["read"], "read", "user", request)
+            return [_user_value(item, self._service("engine.permissions", PermissionEngine)) for item in users.list(query=request.query.get("q", ""))]
+        if not isinstance(data, dict) or "action" not in data: raise APIValidationError("User request is invalid")
+        action = str(data["action"])
+        permission_action = "disable" if action in {"enable", "disable"} else action
+        if permission_action not in USER_PERMISSIONS: raise APIValidationError("User action is invalid")
+        self._require_action(USER_PERMISSIONS[permission_action], permission_action, "user", request)
+        if action == "create":
+            if set(data) != {"action", "email", "display_name", "roles", "password"}: raise APIValidationError("User request is invalid")
+            roles = _roles_input(data["roles"], self._service("engine.permissions", PermissionEngine))
+            authentication = self._service("engine.authentication", AuthenticationEngine)
+            authentication.validate_password(str(data["password"]))
+            user = users.create(email=str(data["email"]), display_name=str(data["display_name"]), role=roles[0])
+            users.assign_roles(user.user_id, roles)
+            authentication.set_password(user.user_id, str(data["password"]))
+        else:
+            identifier = str(data.get("id", "")); user = users.get(identifier)
+            if request.authentication.user_id == identifier and action == "disable":
+                raise APIValidationError("You cannot disable your current account")
+            if action == "update": user = users.update_profile(identifier, display_name=str(data.get("display_name", "")), profile_image_id=user.profile_image_id)
+            elif action in {"enable", "disable"}: user = users.change_state(identifier, AccountState.ACTIVE if action == "enable" else AccountState.INACTIVE)
+            elif action == "assign_roles":
+                assigned = _roles_input(data.get("roles"), self._service("engine.permissions", PermissionEngine))
+                if request.authentication.user_id == identifier and "site-owner" in user.roles and "site-owner" not in assigned:
+                    raise APIValidationError("You cannot remove your current Site Owner role")
+                user = users.assign_roles(identifier, assigned)
+            elif action == "reset_password": self._service("engine.authentication", AuthenticationEngine).set_password(identifier, str(data.get("password", "")))
+            else: raise APIValidationError("User action is invalid")
+        self._audit(request, f"user.{action}", "user", user.user_id)
+        return _user_value(users.get(user.user_id), self._service("engine.permissions", PermissionEngine))
+
+    def _roles(self, request: APIRequest, data: object) -> object:
+        permissions = self._service("engine.permissions", PermissionEngine); users = self._service("engine.users", UserEngine)
+        if request.route.method == "GET":
+            self._require_action(ROLE_PERMISSIONS["read"], "read", "role", request)
+            return {"roles": [_role_value(role, permissions, users) for role in permissions.roles()],
+                    "permissions": [_permission_value(item) for item in permissions.definitions()]}
+        if not isinstance(data, dict): raise APIValidationError("Role request is invalid")
+        if request.route.method == "DELETE":
+            action = "delete"; role_id = str(data.get("id", "")); self._require_action(ROLE_PERMISSIONS[action], action, "role", request)
+            if users.role_user_count(role_id): raise APIValidationError("Role is assigned to users and cannot be deleted")
+            permissions.delete_role(role_id); self._audit(request, "role.delete", "role", role_id); return {"deleted": True}
+        action = str(data.get("action", ""))
+        required = "create" if action == "create" else "assign_permissions" if action == "permissions" else "update"
+        self._require_action(ROLE_PERMISSIONS[required], required, "role", request)
+        if action == "create": role = permissions.create_role(RoleDefinition(_role_id(str(data.get("id", ""))), str(data.get("name", "")), False))
+        elif action == "update": role = permissions.rename_role(str(data.get("id", "")), str(data.get("name", "")))
+        elif action == "permissions":
+            role_id = str(data.get("id", "")); values = data.get("permissions")
+            if not isinstance(values, list) or any(not isinstance(item, str) for item in values): raise APIValidationError("Role permissions are invalid")
+            permissions.set_role_permissions(role_id, tuple(values)); role = permissions.role(role_id)
+            if role is None: raise APIValidationError("Role was not found")
+        else: raise APIValidationError("Role action is invalid")
+        self._audit(request, f"role.{action}", "role", role.role_id)
+        return _role_value(role, permissions, users)
     def _diagnostics(self, request: APIRequest, data: object) -> object:
         health = self._service("engine.observability", HealthEngine)
         return {"liveness": health.public_liveness(), "readiness": health.public_readiness(),
@@ -245,17 +357,25 @@ class AdminPlatformEngine:
         except Exception: items = ()
         return {"view": "listing", "title": "Published content", "items": tuple(
             {"id": item.content_id, "title": item.title, "summary": article_text(str(item.data.get("body", "")))[:180],
+             "featured_image": item.data.get("featured_image", ""),
              "published_at": item.published_at or ""} for item in items)}
 
     @staticmethod
     def _detail_model(item) -> dict[str, object]:
         return {"view": "detail", "id": item.content_id, "title": item.title,
-                "body": sanitize_article_html(str(item.data.get("body", ""))), "published_at": item.published_at or ""}
+                "body": sanitize_article_html(str(item.data.get("body", ""))),
+                "featured_image": item.data.get("featured_image", ""),
+                "published_at": item.published_at or ""}
 
     def _register_starter_resources(self, rendering: RenderingEngine) -> None:
-        themes = self._service("engine.themes", ThemeEngine); theme_id = "favorite.theme.starter"
-        try: themes.package(theme_id)
-        except Exception: return
+        manager = self._service("core.extensions", ExtensionManager)
+        for theme_id in manager.registered("theme"):
+            try: self._register_theme_resources(rendering, theme_id)
+            except Exception: continue
+
+    def _register_theme_resources(self, rendering: RenderingEngine, theme_id: str) -> None:
+        themes = self._service("engine.themes", ThemeEngine)
+        themes.package(theme_id)
         for resource_id, kind, reference in (
             ("starter.header", ResourceKind.COMPONENT, "components/header.html"),
             ("starter.footer", ResourceKind.COMPONENT, "components/footer.html"),
@@ -275,8 +395,12 @@ class AdminPlatformEngine:
             permissions.register(PermissionDefinition(permission_id, OWNER, action, "media", allow_owner=True, allow_public=action == "read"))
         permissions.register(PermissionDefinition(SETTING_PERMISSIONS["read"], OWNER, "read", "setting"))
         permissions.register(PermissionDefinition(SETTING_PERMISSIONS["write"], OWNER, "update", "setting"))
+        for action, permission_id in USER_PERMISSIONS.items(): permissions.register(PermissionDefinition(permission_id, OWNER, action, "user"))
+        for action, permission_id in ROLE_PERMISSIONS.items(): permissions.register(PermissionDefinition(permission_id, OWNER, action, "role"))
+        for action, permission_id in EXTENSION_PERMISSIONS.items(): permissions.register(PermissionDefinition(permission_id, OWNER, action, "extension_package"))
         content = self._service("engine.content", ContentEngine)
-        fields = (ContentField("slug", FieldKind.STRING, True), ContentField("body", FieldKind.STRING, True))
+        fields = (ContentField("slug", FieldKind.STRING, True), ContentField("body", FieldKind.STRING, True),
+                  ContentField("featured_image", FieldKind.STRING, False))
         content.register_type(ContentType("page", OWNER, "Page", fields, CONTENT_PERMISSIONS))
         content.register_type(ContentType("post", OWNER, "Post", fields, CONTENT_PERMISSIONS))
         self._service("engine.media", MediaEngine).register_access(MediaAccessContract(OWNER, MEDIA_PERMISSIONS))
@@ -289,6 +413,24 @@ class AdminPlatformEngine:
         localization.register_language(Language("en", "English", "English")); localization.register_language(Language("fr", "French", "Français"))
         localization.register_locale(Locale("en", "en")); localization.register_locale(Locale("fr", "fr")); localization.set_default("en")
         localization.register_translations(TranslationResource(OWNER, "public", "en", {"public.welcome": "Welcome"}))
+
+    def _ensure_site_owner(self, permissions: PermissionEngine) -> None:
+        """Grant the fixed 0.1.0 administration set explicitly; this is never a bypass."""
+        explicit = tuple(dict.fromkeys((*PERMISSIONS.values(), *CONTENT_PERMISSIONS.values(), *MEDIA_PERMISSIONS.values(),
+                                       *SETTING_PERMISSIONS.values(), *USER_PERMISSIONS.values(), *ROLE_PERMISSIONS.values(),
+                                       *EXTENSION_PERMISSIONS.values())))
+        try:
+            if permissions.role("site-owner") is not None: permissions.set_release_managed_permissions("site-owner", explicit)
+        except Exception:
+            # Clean pre-migration bootstrap cannot persist grants yet. A subsequent explicit CLI invocation reloads them.
+            pass
+
+    def _require_action(self, permission_id: str, action: str, resource_type: str, request: APIRequest) -> None:
+        self._service("engine.permissions", PermissionEngine).require(permission_id, AuthorizationContext(action, resource_type, request.authentication))
+
+    def _audit(self, request: APIRequest, action: str, target_type: str, target_id: str) -> None:
+        if request.authentication.user_id is None: raise APIValidationError("Authenticated actor is unavailable")
+        self._service("engine.audit", AuditEngine).record(actor_user_id=request.authentication.user_id, action=action, target_type=target_type, target_id=target_id)
 
     def _content_visibility(self, resource_id: str) -> ResourceVisibility:
         try:
@@ -312,19 +454,36 @@ def _content_authoring_input(title: object, data: object) -> tuple[str, Mapping[
     if not isinstance(title, str) or not 1 <= len(title.strip()) <= 500:
         raise APIValidationError("Content title must contain between 1 and 500 characters")
     values = _mapping(data)
-    if set(values) != {"slug", "body"} or not isinstance(values["slug"], str) or not isinstance(values["body"], str):
+    if set(values) - {"slug", "body", "featured_image"} or not {"slug", "body"}.issubset(values) or not isinstance(values["slug"], str) or not isinstance(values["body"], str):
         raise APIValidationError("Page content fields are invalid")
     slug, body = normalize_slug(values["slug"]), sanitize_article_html(values["body"])
     if not valid_slug(slug):
         raise APIValidationError("Content slug must use Unicode letters, numbers, and single hyphens")
     if not 1 <= len(body) <= 100_000:
         raise APIValidationError("Content body must contain between 1 and 100,000 characters")
-    return title.strip(), {"slug": slug, "body": body}
+    featured_image = _featured_image(values.get("featured_image", ""))
+    return title.strip(), {"slug": slug, "body": body, "featured_image": featured_image}
+
+
+def _featured_image(value: object) -> str:
+    if not isinstance(value, str):
+        raise APIValidationError("Featured image reference is invalid")
+    reference = value.strip()
+    if not reference:
+        return ""
+    if len(reference) > 1_000 or any(character in reference for character in "\r\n\t"):
+        raise APIValidationError("Featured image reference is invalid")
+    if reference.startswith("/") and not reference.startswith("//"):
+        return reference
+    parsed = urlsplit(reference)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        raise APIValidationError("Featured image must use an HTTP, HTTPS, or site-relative URL")
+    return reference
 def _content_value(item) -> dict[str, object]: return {"id": item.content_id, "type": item.type_id, "title": item.title, "data": dict(item.data), "state": item.state.value}
 def _media_value(item) -> dict[str, object]: return {"id": item.media_id, "name": item.file_name, "mime_type": item.mime_type, "type": item.media_type.value, "size": item.size, "metadata": dict(item.metadata)}
 
 def _extension_value(manager: ExtensionManager, plugins: PluginEngine, identifier: str,
-                     active_theme: str | None) -> dict[str, object]:
+                     active_theme: str | None, package_managed: bool) -> dict[str, object]:
     manifest = manager.manifest(identifier)
     is_plugin = manifest.type.value == "plugin"
     return {
@@ -342,7 +501,40 @@ def _extension_value(manager: ExtensionManager, plugins: PluginEngine, identifie
         "optional_dependencies": dict(manifest.optional_dependencies),
         "permissions": list(manifest.permissions),
         "granted_permissions": list(plugins.granted_permissions(identifier)) if is_plugin else [],
+        "package_managed": package_managed,
     }
+
+
+def _user_value(user, permissions: PermissionEngine) -> dict[str, object]:
+    permission_ids = sorted({permission for role in user.roles for permission in permissions.role_permissions(role)})
+    return {"id": user.user_id, "email": user.email, "display_name": user.display_name,
+            "state": user.state.value, "roles": list(user.roles), "permissions": permission_ids}
+
+
+def _role_value(role: RoleDefinition, permissions: PermissionEngine, users: UserEngine) -> dict[str, object]:
+    return {"id": role.role_id, "name": role.name, "built_in": role.built_in,
+            "permissions": list(permissions.role_permissions(role.role_id)), "users": users.role_user_count(role.role_id)}
+
+
+def _permission_value(definition: PermissionDefinition) -> dict[str, object]:
+    return {"id": definition.permission_id, "owner": definition.owner, "action": definition.action,
+            "resource_type": definition.resource_type, "group": definition.permission_id.split(".")[1].replace("_", " ").title()}
+
+
+def _roles_input(value: object, permissions: PermissionEngine) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise APIValidationError("User roles are invalid")
+    roles = tuple(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+    known = {role.role_id for role in permissions.roles()}
+    if not roles or any(role not in known for role in roles): raise APIValidationError("User roles are invalid")
+    return roles
+
+
+def _role_id(value: str) -> str:
+    normalized = value.strip().casefold()
+    if not normalized or len(normalized) > 64 or normalized[0] == "-" or normalized[-1] == "-" or any(not (character.isalnum() or character == "-") for character in normalized):
+        raise APIValidationError("Role identifier is invalid")
+    return normalized
 
 def _search_href(resource_type: str, resource_id: str) -> str:
     return f"/site/content/{quote(resource_id, safe='')}" if resource_type == "content" else "/site/content"
@@ -387,9 +579,10 @@ def _view_markup(model: Mapping[str, object]) -> str:
                 f'<section class="section shell" aria-live="polite"><h2>Results for “{query}”</h2>{results}</section>')
     title = escape(str(model.get("title", "Content")))
     body = sanitize_article_html(str(model.get("body", "")))
+    featured = _featured_markup(model.get("featured_image"), title)
     published = escape(str(model.get("published_at", ""))[:10])
     meta = f'<p class="meta">Published {published}</p>' if published else ""
-    return (f'<article class="article shell"><a class="back-link" href="/site/content">← Back to published content</a><header><p class="eyebrow">Published content</p><h1>{title}</h1>{meta}</header>'
+    return (f'<article class="article shell"><a class="back-link" href="/site/content">← Back to published content</a><header><p class="eyebrow">Published content</p><h1>{title}</h1>{meta}</header>{featured}'
             f'<div class="prose">{body or "<p>This resource has no body content yet.</p>"}</div></article>')
 
 def _cards(value: object, *, limit: int | None = None) -> str:
@@ -400,8 +593,22 @@ def _cards(value: object, *, limit: int | None = None) -> str:
     cards = []
     for item in items:
         if not isinstance(item, Mapping): continue
-        cards.append(f'<article class="content-card"><p class="card-label">Published</p><h3><a href="/site/content/{quote(str(item.get("id", "")), safe="")}">{escape(str(item.get("title", "Untitled")))}</a></h3><p>{escape(str(item.get("summary", ""))) or "Open this resource to read more."}</p><a class="card-link" href="/site/content/{quote(str(item.get("id", "")), safe="")}">Read content <span aria-hidden="true">→</span></a></article>')
+        title = escape(str(item.get("title", "Untitled")))
+        cards.append(f'<article class="content-card">{_featured_markup(item.get("featured_image"), title, card=True)}<p class="card-label">Published</p><h3><a href="/site/content/{quote(str(item.get("id", "")), safe="")}">{title}</a></h3><p>{escape(str(item.get("summary", ""))) or "Open this resource to read more."}</p><a class="card-link" href="/site/content/{quote(str(item.get("id", "")), safe="")}">Read content <span aria-hidden="true">→</span></a></article>')
     return '<div class="content-grid">' + "".join(cards) + "</div>"
+
+
+def _featured_markup(value: object, title: str, *, card: bool = False) -> str:
+    try:
+        reference = _featured_image(value)
+    except APIValidationError:
+        return ""
+    if not reference:
+        return ""
+    class_name = "card-featured-image" if card else "article-featured-image"
+    style = ("width:calc(100% + 3rem);height:170px;margin:-1.5rem -1.5rem 1.25rem;object-fit:cover" if card
+             else "display:block;width:100%;max-height:560px;margin:0 auto 2.5rem;border-radius:1.1rem;object-fit:cover")
+    return f'<img class="{class_name}" style="{style}" src="{escape(reference, quote=True)}" alt="Featured image for {escape(title, quote=True)}" loading="lazy">'
 
 def _search_results(value: object) -> str:
     items = tuple(value) if isinstance(value, (tuple, list)) else ()

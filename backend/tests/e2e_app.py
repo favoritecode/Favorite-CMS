@@ -45,7 +45,11 @@ def seed(kernel: Kernel) -> None:
         f"platform.media.{action}" for action in ("create", "read", "update", "delete")) + ("platform.setting.read", "platform.setting.write")
     for permission_id in domain_permissions:
         permissions.grant_role(RoleGrant("e2e-operator", permission_id, OWNER))
-    for permission_id in ("admin.content.manage", "admin.media.manage", "admin.settings.manage", "admin.extensions.manage", "admin.diagnostics.view"):
+    for permission_id in ("admin.content.manage", "admin.media.manage", "admin.settings.manage", "admin.extensions.manage", "admin.users.manage", "admin.roles.manage", "admin.diagnostics.view"):
+        permissions.grant_role(RoleGrant("e2e-operator", permission_id, OWNER))
+    for permission_id in tuple(f"platform.user.{action}" for action in ("create", "read", "update", "disable", "reset_password", "assign_roles")) + tuple(
+        f"platform.role.{action}" for action in ("create", "read", "update", "delete", "assign_permissions")) + tuple(
+        f"platform.extension.{action}" for action in ("install", "activate", "deactivate", "update", "uninstall")):
         permissions.grant_role(RoleGrant("e2e-operator", permission_id, OWNER))
     for email, role in (("operator@example.test", "e2e-operator"), ("viewer@example.test", "e2e-viewer")):
         user = users.find_by_email(email) or users.create(email=email, display_name="E2E User", role=role)

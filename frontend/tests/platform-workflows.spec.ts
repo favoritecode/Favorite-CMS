@@ -8,54 +8,78 @@ async function login(page: Page) {
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/admin$/);
 }
+function extensionCard(page: Page, id: string) {
+  return page.locator("article").filter({ hasText: id });
+}
+async function extensionAction(page: Page, id: string, action: "Activate" | "Deactivate") {
+  await extensionCard(page, id).getByRole("button", { name: action, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: new RegExp(`^${action}`) });
+  if (action === "Activate") {
+    for (const checkbox of await dialog.getByRole("checkbox").all()) await checkbox.check();
+  }
+  await dialog.getByRole("button", { name: action, exact: true }).click();
+  await expect(extensionCard(page, id)).toContainText(action === "Activate" ? "enabled" : "disabled");
+}
+async function configurePlugin(page: Page, id: string) {
+  await extensionCard(page, id).getByRole("button", { name: "Configure" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+}
+async function savePluginSettings(page: Page) {
+  const [response] = await Promise.all([
+    page.waitForResponse(response => response.url().includes("/admin/manage/transport/plugin-") && response.request().method() === "PATCH"),
+    page.getByRole("button", { name: "Save settings" }).click(),
+  ]);
+  expect(response.status(), await response.text()).toBe(200);
+}
 
 test("content, media, settings, diagnostics, and extension workflows use the real platform", async ({ page }) => {
   await login(page);
-  await expect(page.getByText("Welcome to Favorite CMS")).toBeVisible();
-  await expect(page.getByText("Readiness", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "System status" })).toBeVisible();
-  await expect(page.getByText("0 pending")).toBeVisible();
-  await page.goto("/admin/manage");
-  await expect(page.getByRole("heading", { name: "CMS management" })).toBeVisible();
-  await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "System health" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Active theme" })).toBeVisible();
+  await page.goto("/admin/pages");
+  await expect(page.getByRole("heading", { name: "Pages", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New page" }).click();
   await expect(page.getByText("Welcome to Favorite CMS").first()).toBeVisible();
   const suffix = Date.now();
   await page.getByLabel(/^Title/).fill(`Browser-created page ${suffix}`);
-  await page.getByLabel("Slug").fill(`browser-${suffix}`);
+  await page.getByRole("textbox", { name: "Slug" }).fill(`browser-${suffix}`);
   await page.getByLabel("Body").fill("Created through UI, HTTP, API, Permission, and Content Engine.");
-  await page.getByRole("button", { name: "Create draft" }).click();
-  await expect(page.getByText("Content created as a draft")).toBeVisible();
-  await page.getByRole("button", { name: new RegExp(`Browser-created page ${suffix}`) }).click();
-  await page.getByLabel("Edit title").fill(`Browser-edited page ${suffix}`);
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByRole("status")).toContainText("Draft changes saved");
-  await page.getByRole("button", { name: "Publish publicly", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Content published");
+  await expect(page.getByText("Draft saved automatically.").first()).toBeVisible();
+  await page.getByRole("textbox", { name: "Title" }).fill(`Browser-edited page ${suffix}`);
+  await expect(page.getByText("Draft saved automatically.").first()).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Publish now", exact: true }).first().click();
+  await expect(page.getByText("Page published.")).toBeVisible();
   await expect(page.getByText("published", { exact: true }).last()).toBeVisible();
+  await page.goto("/admin/media");
+  await page.getByRole("button", { name: "Add document" }).first().click();
   await page.getByLabel("File name").fill("browser-note.txt");
-  await page.getByLabel(/^Text document content/).fill("stored through Media and Storage");
-  await page.getByRole("button", { name: "Store media" }).click();
-  await expect(page.getByText("Media stored: browser-note.txt")).toBeVisible();
-  await expect(page.getByText(/text\/plain · \d+ bytes/).first()).toBeVisible();
+  await page.getByLabel("Document content").fill("stored through Media and Storage");
+  await page.getByRole("dialog").getByRole("button", { name: "Add document" }).click();
+  await expect(page.getByText("Text document added to the media library.")).toBeVisible();
+  await expect(page.getByRole("row", { name: /browser-note\.txt.*text\/plain.*\d+ B/ })).toBeVisible();
+  await page.goto("/admin/settings");
   await page.getByLabel("Site title").fill("Favorite Browser CMS");
-  await page.getByRole("button", { name: "Save setting" }).click();
-  await expect(page.getByText("Setting saved: Favorite Browser CMS")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Site settings saved.")).toBeVisible();
+  await page.goto("/admin/diagnostics");
   await expect(page.getByText("Liveness")).toBeVisible();
   await expect(page.getByText("Readiness", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Configuration readiness" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Configuration", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Operator-controlled lifecycle" })).toBeVisible();
-  await expect(page.getByText("Normal startup performs neither migration nor installation.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Dependency status" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Service boundaries" })).toBeVisible();
-  await page.getByRole("button", { name: "Activate tests.plugin.healthy" }).click();
-  await expect(page.getByText("tests.plugin.healthy activated")).toBeVisible();
-  await page.getByRole("button", { name: "Deactivate tests.plugin.healthy" }).click();
-  await expect(page.getByText("tests.plugin.healthy deactivated")).toBeVisible();
-  await page.getByRole("button", { name: "Activate tests.plugin.failing" }).click();
-  await expect(page.getByRole("status")).toContainText(/failed safely|validation/i);
-  await expect(page.getByRole("heading", { name: "CMS management" })).toBeVisible();
-  await page.getByRole("button", { name: "Activate tests.theme.failing" }).click();
-  await expect(page.getByRole("status")).toContainText(/failed safely|validation/i);
+  await expect(page.getByText("explicit", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Services", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Content and presentation" })).toBeVisible();
+  await page.goto("/admin/plugins");
+  await extensionAction(page, "tests.plugin.healthy", "Activate");
+  await extensionAction(page, "tests.plugin.healthy", "Deactivate");
+  await extensionCard(page, "tests.plugin.failing").getByRole("button", { name: "Activate", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Activate", exact: true }).click();
+  await expect(page.getByText(/failed safely|validation/i)).toBeVisible();
+  await page.goto("/admin/themes");
+  await extensionCard(page, "tests.theme.failing").getByRole("button", { name: "Activate", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Activate", exact: true }).click();
+  await expect(page.getByText(/failed safely|validation/i)).toBeVisible();
   const publicPage = await page.request.get("http://127.0.0.1:8011/site/welcome");
   expect(publicPage.status()).toBe(200);
   expect(await publicPage.text()).toContain("Welcome to Favorite CMS");
@@ -118,17 +142,12 @@ test("search and localization render deterministic real backend results", async 
 
 test("first-party Plugin activates with explicit capabilities and cleans up through real transport", async ({ page }) => {
   await login(page);
-  await page.goto("/admin/manage");
-  await expect(page.getByText(/favorite\.plugin\.example · v1\.0\.0/)).toBeVisible();
-  await page.getByRole("button", { name: "Activate favorite.plugin.example" }).click();
-  await expect(page.getByRole("status")).toContainText("Review and approve");
-  await page.getByLabel("I reviewed and approve the listed Plugin capabilities").check();
-  await page.getByRole("button", { name: "Activate favorite.plugin.example" }).click();
-  await expect(page.getByRole("status")).toContainText("favorite.plugin.example activated");
-  await expect(page.getByRole("heading", { name: "Example Plugin" })).toBeVisible();
+  await page.goto("/admin/plugins");
+  await expect(extensionCard(page, "favorite.plugin.example")).toBeVisible();
+  await extensionAction(page, "favorite.plugin.example", "Activate");
+  await configurePlugin(page, "favorite.plugin.example");
   await page.getByLabel("Plugin message").fill("Saved through the real Plugin API.");
-  await page.getByRole("button", { name: "Save Plugin state" }).click();
-  await expect(page.getByRole("status")).toContainText("Example Plugin state saved");
+  await savePluginSettings(page);
   await page.goto("http://127.0.0.1:8011/plugins/example");
   await expect(page.getByRole("heading", { name: "Example Plugin" })).toBeVisible();
   await expect(page.getByText("Saved through the real Plugin API.")).toBeVisible();
@@ -143,14 +162,12 @@ test("first-party Plugin activates with explicit capabilities and cleans up thro
   expect(forbidden.status()).toBe(403);
   await page.request.delete("/admin/session");
   await login(page);
-  await page.goto("/admin/manage");
-  await page.getByRole("button", { name: "Deactivate favorite.plugin.example" }).click();
-  await expect(page.getByRole("status")).toContainText("favorite.plugin.example deactivated");
-  await expect(page.getByRole("heading", { name: "Example Plugin" })).toHaveCount(0);
+  await page.goto("/admin/plugins");
+  await extensionAction(page, "favorite.plugin.example", "Deactivate");
   const removed = await page.request.get("http://127.0.0.1:8011/plugins/example");
   expect(removed.status()).toBe(404);
-  await page.getByLabel("I reviewed and approve the listed Plugin capabilities").check();
-  await page.getByRole("button", { name: "Activate favorite.plugin.example" }).click();
+  await extensionAction(page, "favorite.plugin.example", "Activate");
+  await configurePlugin(page, "favorite.plugin.example");
   await expect(page.getByLabel("Plugin message")).toHaveValue("Saved through the real Plugin API.");
   const homepage = await page.request.get("http://127.0.0.1:8011/site/welcome");
   expect(homepage.status()).toBe(200);
@@ -158,33 +175,35 @@ test("first-party Plugin activates with explicit capabilities and cleans up thro
 });
 
 test("first-party Plugin suite uses real Admin, API, Routing, and Rendering contracts", async ({ page }) => {
-  await login(page); await page.goto("/admin/manage");
-  await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+  await login(page); await page.goto("/admin/pages");
+  await expect(page.getByRole("heading", { name: "Pages", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New page" }).click();
   await page.getByLabel(/^Title/).fill("Phase 22 SEO content");
-  await page.getByLabel("Slug").fill("phase-22-seo-content");
+  await page.getByRole("textbox", { name: "Slug" }).fill("phase-22-seo-content");
   await page.getByLabel("Body").fill("Content-owned SEO projection body.");
-  await page.getByRole("button", { name: "Create draft" }).click();
-  await page.getByRole("button", { name: /Phase 22 SEO content/ }).click();
-  await page.getByRole("button", { name: "Publish publicly", exact: true }).click();
-  await page.getByLabel("I reviewed and approve the listed Plugin capabilities").check();
+  await expect(page.getByText("Draft saved automatically.").first()).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Publish now", exact: true }).first().click();
+  await page.goto("/admin/plugins");
   for (const plugin of ["favorite.plugin.seo", "favorite.plugin.contact", "favorite.plugin.sitemap", "favorite.plugin.analytics"]) {
-    await page.getByRole("button", { name: `Activate ${plugin}` }).click();
-    await expect(page.getByRole("status")).toContainText(`${plugin} activated`);
+    await extensionAction(page, plugin, "Activate");
   }
+  await configurePlugin(page, "favorite.plugin.seo");
   await page.getByLabel("SEO site title").fill("Favorite Suite Site");
   await page.getByLabel("Meta description").fill("Metadata configured by the SEO Plugin.");
   await page.getByLabel("Canonical public origin").fill("https://example.test");
-  await page.getByRole("button", { name: "Save SEO" }).click();
-  await expect(page.getByRole("status")).toContainText("SEO configuration saved");
-  await expect(page.getByText(/Required:.*content\.read/).first()).toBeVisible();
-  await expect(page.getByText(/Granted:.*content\.read/).first()).toBeVisible();
-  await page.getByLabel("Content SEO description").fill("Projected & safely escaped.");
+  await savePluginSettings(page);
+  await page.getByRole("button", { name: "Close settings" }).click();
+  await expect(extensionCard(page, "favorite.plugin.seo")).toContainText("content.read");
+  await page.goto("/admin/pages");
+  await page.getByRole("button", { name: /Phase 22 SEO content/ }).click();
+  await page.getByLabel("SEO title").fill("Search-ready Phase 22 title");
+  await page.getByLabel("Meta description").fill("Projected & safely escaped.");
   await page.getByLabel("Open Graph title").fill('Projected "title"');
-  await page.getByRole("button", { name: "Save Content SEO" }).click();
-  await expect(page.getByRole("status")).toContainText("Content SEO metadata saved");
-  await page.getByLabel("Edit body").fill("Content edited after SEO metadata was saved.");
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByRole("status")).toContainText("Draft changes saved");
+  await page.getByRole("button", { name: "Save SEO metadata" }).click();
+  await expect(page.getByText("Content SEO metadata saved.")).toBeVisible();
+  await page.getByLabel("Body").fill("Content edited after SEO metadata was saved.");
+  await page.getByRole("dialog").getByRole("button", { name: "Save changes" }).first().click();
+  await expect(page.getByText("Draft saved.")).toBeVisible();
   const seoPage = await page.request.get("http://127.0.0.1:8011/site/welcome"); const seoHtml = await seoPage.text();
   expect(seoHtml).toContain('name="description" content="Metadata configured by the SEO Plugin."');
   expect(seoHtml).toContain('rel="canonical" href="https://example.test/site/welcome"');
@@ -195,11 +214,13 @@ test("first-party Plugin suite uses real Admin, API, Routing, and Rendering cont
   const projected = await page.request.get(`http://127.0.0.1:8011/site/content/${match![1]}`);
   const projectedHtml = await projected.text();
   expect(projectedHtml).toContain('content="Projected &amp; safely escaped."');
+  expect(projectedHtml).toContain("<title>Search-ready Phase 22 title</title>");
   expect(projectedHtml).toContain('content="Projected &quot;title&quot;"');
 
+  await page.goto("/admin/plugins");
+  await configurePlugin(page, "favorite.plugin.contact");
   await page.getByLabel("Contact recipient").fill("site-owner@example.test");
-  await page.getByRole("button", { name: "Save Contact" }).click();
-  await expect(page.getByRole("status")).toContainText("Contact configuration saved");
+  await savePluginSettings(page);
   await page.goto("http://127.0.0.1:8011/contact");
   await page.getByRole("button", { name: "Send message" }).click();
   expect(await page.getByLabel("Name").evaluate((input: HTMLInputElement) => input.validationMessage.length > 0)).toBeTruthy();
@@ -207,29 +228,30 @@ test("first-party Plugin suite uses real Admin, API, Routing, and Rendering cont
   await page.getByLabel("Message").fill("Submitted through the real Plugin API."); await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByRole("status")).toHaveText("Your message is pending delivery.");
 
-  await page.goto("/admin/manage");
-  await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+  await page.goto("/admin/plugins");
+  await configurePlugin(page, "favorite.plugin.contact");
   await expect(page.getByText("Pending").locator("..").getByText("1")).toBeVisible();
-  await expect(page.getByText(/Provider: not configured/)).toBeVisible();
+  await page.getByRole("button", { name: "Close settings" }).click();
+  await configurePlugin(page, "favorite.plugin.sitemap");
   await page.getByLabel("Public base URL").fill("https://example.test");
-  await page.getByRole("button", { name: "Save Sitemap" }).click(); await expect(page.getByRole("status")).toContainText("Sitemap configuration saved");
+  await savePluginSettings(page);
+  await page.getByRole("button", { name: "Close settings" }).click();
   const sitemap = await page.request.get("http://127.0.0.1:8011/sitemap.xml");
   expect(sitemap.status()).toBe(200); expect(sitemap.headers()["content-type"]).toContain("application/xml");
   expect(await sitemap.text()).toContain("https://example.test/site/content/");
 
+  await configurePlugin(page, "favorite.plugin.analytics");
   await page.getByLabel("Analytics provider").selectOption("none"); await page.getByLabel("Analytics site ID").fill("");
-  await page.getByRole("button", { name: "Save Analytics" }).click(); await expect(page.getByRole("status")).toContainText("Analytics configuration saved");
+  await savePluginSettings(page);
   const disabled = await page.request.get("http://127.0.0.1:8011/site/welcome"); expect(await disabled.text()).not.toContain("favorite-analytics");
   await page.getByLabel("Analytics provider").selectOption("first-party"); await page.getByLabel("Analytics site ID").fill("browser_site");
-  await page.getByRole("button", { name: "Save SEO" }).click(); await expect(page.getByRole("status")).toContainText("SEO configuration saved");
-  await page.getByRole("button", { name: "Save Analytics" }).click();
-  await expect(page.getByRole("status")).toContainText("Analytics configuration saved");
+  await savePluginSettings(page);
+  await page.getByRole("button", { name: "Close settings" }).click();
   const enabled = await page.request.get("http://127.0.0.1:8011/site/welcome");
   expect(await enabled.text()).toContain('name="favorite-analytics" content="first-party" data-site-id="browser_site"');
 
   for (const plugin of ["favorite.plugin.analytics", "favorite.plugin.sitemap", "favorite.plugin.contact", "favorite.plugin.seo"]) {
-    await page.getByRole("button", { name: `Deactivate ${plugin}` }).click();
-    await expect(page.getByRole("status")).toContainText(`${plugin} deactivated`);
+    await extensionAction(page, plugin, "Deactivate");
   }
   expect((await page.request.get("http://127.0.0.1:8011/contact")).status()).toBe(404);
   expect((await page.request.get("http://127.0.0.1:8011/sitemap.xml")).status()).toBe(404);

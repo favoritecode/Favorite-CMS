@@ -22,7 +22,7 @@ Lifecycle is discovery → manifest/compatibility/dependency validation → expl
 
 ## Content SEO projection
 
-Content Engine owns optional per-resource SEO metadata. Authorized callers set bounded `ContentSeoMetadata` through Content authorization. Consumers receive `ContentSeoProjection` only for published Content and a validated HTTP(S) public origin. Canonical and Open Graph image values are relative paths; no fetch occurs. SEO Plugin escapes projected values before presentation.
+Content Engine owns optional per-resource SEO metadata. Authorized callers set bounded `ContentSeoMetadata` through Content authorization, including an optional SEO title, meta description, canonical path, robots value, and Open Graph fields. Consumers receive `ContentSeoProjection` only for published Content and a validated HTTP(S) public origin. An empty SEO title falls back to the Content title. Canonical and Open Graph image values are relative paths; no fetch occurs. SEO Plugin escapes projected values before presentation.
 
 ## Contact notification delivery
 
@@ -62,6 +62,16 @@ Only fixed platform-supported first-party identifiers and contribution kinds can
 Public Route contributions use the Plugin-scoped Routing facade, API operations use the Plugin-scoped API facade, presentation uses Rendering resources/operations/decorators, and Admin modules use the Plugin-scoped Admin facade. State uses an approved owner-scoped contract such as Settings. Deactivation must remove every owned Route, API operation, rendering resource/decorator, Admin module, Setting definition, health contribution, and Notification contract. Partial registration or activation failure triggers cleanup; update failure restores the previous valid runtime and state.
 
 ## Extension testing and packaging
+
+## Local Admin ZIP installation
+
+Authorized operators may upload a local ZIP through **Themes → Add Theme** or **Plugins → Add Plugin**. The API enforces separate explicit `platform.extension.install`, `activate`, `deactivate`, `update`, and `uninstall` permissions in addition to Admin module visibility. Installation and activation are separate.
+
+The package boundary limits the compressed archive to 5 MB, extracted content to 20 MB, and entries to 500. It rejects malformed ZIPs, absolute paths, drive-qualified paths, `..` traversal, case-conflicting/duplicate names, symlinks/special files, missing or inconsistent manifests, incompatible Core versions, missing dependencies, undeclared Theme resources, and unsafe layouts. Validation and materialization complete before lifecycle registration; the durable archive is stored only in the `extensions/packages` Storage scope.
+
+Uploaded Themes must provide the standard public resource set (`templates/page.html`, `layouts/base.html`, header/footer components, and a declared stylesheet), so Rendering can compose existing public operations without Theme code. Uploaded Plugins are deliberately data-only: `plugin.json`, an optional empty `contributions.json`, README, and license files are accepted. Executable Python/JavaScript/native/shell content and arbitrary declarative contributions are rejected. There is no code sandbox, signing authority, trusted publisher registry, remote repository, or marketplace in `0.1.0`; these are future trust contracts rather than implied security.
+
+Manual update validates identity, semantic version ordering, compatibility, dependencies, and the complete candidate before replacing the runtime. Storage or activation failure leaves the current package intact. An inactive uploaded extension may be uninstalled; the active Theme, active Plugins, bundled packages, and the Starter Theme are protected by lifecycle rules.
 
 Test data-only discovery, manifest validation, Core compatibility, dependency ordering, exact capability denial/approval, activation, deactivation, cleanup, reactivation, restart state, failed-activation rollback, safe API errors, ownership boundaries, Theme fallback, and traversal/symlink rejection. Use real browser transport for user-facing contributions and do not mock away the owning Engine.
 

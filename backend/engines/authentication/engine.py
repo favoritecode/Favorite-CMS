@@ -186,6 +186,7 @@ class AuthenticationEngine:
 
     def set_password(self, user_id: str, password: str) -> None:
         self._require_ready()
+        self.validate_password(password)
         user = self._users_required().get(user_id)
         encoded = self._hasher.hash(password)
         with self._database_required().transaction() as session:
@@ -204,6 +205,12 @@ class AuthenticationEngine:
                     .where(_credentials.c.user_id == user.user_id)
                     .values(password_hash=encoded, credential_version=str(int(current) + 1))
                 )
+
+    def validate_password(self, password: str) -> None:
+        """Validate a new credential before another owner creates related state."""
+        _password(password)
+        if len(password) < 12:
+            raise InvalidAuthenticationRequest("Credential must contain at least 12 characters")
 
     def login(self, *, email: str, password: str) -> AuthenticationResult:
         self._require_ready()

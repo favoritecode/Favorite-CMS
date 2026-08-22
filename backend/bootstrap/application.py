@@ -17,6 +17,7 @@ from backend.engines.scheduler import SchedulerEngine
 from backend.engines.storage import StorageEngine
 from backend.engines.permissions import PermissionEngine
 from backend.engines.users import UserEngine
+from backend.engines.audit import AuditEngine
 from backend.engines.content import ContentEngine
 from backend.engines.localization import LocalizationEngine
 from backend.engines.media import MediaEngine
@@ -26,6 +27,7 @@ from backend.engines.seo import SeoEngine
 from backend.engines.settings import SettingsEngine
 from backend.engines.plugins import PluginEngine
 from backend.engines.themes import ThemeEngine
+from backend.engines.extension_packages import ExtensionPackageEngine
 from backend.engines.routing import RoutingEngine
 from backend.engines.api import APIEngine
 from backend.engines.rendering import RenderingEngine
@@ -54,6 +56,7 @@ def build_kernel(*, console_logging: bool = False) -> Kernel:
     engines.register(NotificationEngine())
     engines.register(SchedulerEngine())
     engines.register(UserEngine())
+    engines.register(AuditEngine())
     engines.register(AuthenticationEngine())
     engines.register(PermissionEngine())
     engines.register(SettingsEngine())
@@ -65,6 +68,7 @@ def build_kernel(*, console_logging: bool = False) -> Kernel:
     engines.register(SeoEngine())
     engines.register(PluginEngine())
     engines.register(ThemeEngine())
+    engines.register(ExtensionPackageEngine())
     engines.register(RoutingEngine())
     engines.register(APIEngine())
     engines.register(RenderingEngine())

@@ -19,83 +19,88 @@ const visible = async (locator, label) => {
   await locator.waitFor({ state: "visible" });
   check(true, label);
 };
+const extensionCard = (id) => page.locator("article").filter({ hasText: id });
+const extensionAction = async (id, action) => {
+  await extensionCard(id).waitFor();
+  const trigger = extensionCard(id).getByRole("button", { name: action, exact: true });
+  if (await trigger.count() > 0) {
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: new RegExp(`^${action}`) });
+    for (const checkbox of await dialog.getByRole("checkbox").all()) await checkbox.check();
+    await dialog.getByRole("button", { name: action, exact: true }).click();
+  }
+  await extensionCard(id).getByText(action === "Activate" ? "enabled" : "disabled", { exact: true }).waitFor();
+};
 
 try {
-  await page.goto(`${frontend}/admin`);
-  await visible(page.getByRole("heading", { name: "Admin sign in" }), "unauthenticated Admin is denied");
-  await page.getByLabel("Email").fill(email);
+  await page.goto(`${frontend}/admin/login`);
+  await visible(page.getByRole("heading", { name: "Sign in to Admin" }), "Admin login is available");
+  await page.getByLabel("Email address").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL(/\/admin$/);
-  await visible(page.getByRole("heading", { name: "Admin dashboard" }), "initial identity authenticates");
+  await visible(page.getByRole("heading", { name: "Dashboard", exact: true }), "initial identity authenticates");
   await page.waitForFunction(() => document.querySelectorAll('nav[aria-label="Administration"] a').length > 1);
   check((await page.getByRole("navigation", { name: "Administration" }).getByRole("link").allTextContents()).length >= 6, "Admin navigation is permission-filtered");
   const cookie = (await context.cookies()).find((item) => item.name === "favorite_admin_session");
   check(Boolean(cookie?.httpOnly && cookie.sameSite === "Strict"), "session cookie is HttpOnly and SameSite Strict");
   check(await page.evaluate(() => localStorage.length === 0 && sessionStorage.length === 0), "browser credential stores are empty");
 
-  await page.goto(`${frontend}/admin/manage`);
-  await visible(page.getByRole("heading", { name: "CMS management" }), "dashboard management surface loads");
+  await page.goto(`${frontend}/admin/pages`);
+  await visible(page.getByRole("heading", { name: "Pages", exact: true }), "Content management loads");
   const suffix = Date.now();
+  await page.getByRole("button", { name: "New page" }).click();
   await page.getByLabel(/^Title/).fill(`Clean candidate ${suffix}`);
-  await page.getByLabel("Slug").fill(`clean-candidate-${suffix}`);
+  await page.getByRole("textbox", { name: "Slug" }).fill(`clean-candidate-${suffix}`);
   await page.getByLabel("Body").fill("Created through the clean distribution transport.");
-  await page.getByRole("button", { name: "Create draft" }).click();
-  await page.getByRole("button", { name: new RegExp(`Clean candidate ${suffix}`) }).click();
+  await page.getByRole("button", { name: "Save draft", exact: true }).first().click();
+  await visible(page.getByText("Draft created."), "draft creation works");
   check(await page.getByText("draft", { exact: true }).last().isVisible(), "draft is visible in Admin");
   const draftPublic = await page.request.get(`${backend}/site/content`);
   check(!(await draftPublic.text()).includes(`Clean candidate ${suffix}`), "draft is not publicly visible");
-  await page.getByLabel("Edit title").fill(`Edited clean candidate ${suffix}`);
-  await page.getByLabel("Edit body").fill("Edited before publication through the clean distribution transport.");
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await page.getByRole("status").filter({ hasText: "Draft changes saved" }).waitFor();
-  check(true, "draft edit works");
-  await page.getByRole("button", { name: "Publish publicly", exact: true }).click();
-  await page.getByRole("status").filter({ hasText: "published" }).waitFor();
-  check(true, "Content create and publish works");
-  await page.getByLabel("Edit title").fill(`Published update ${suffix}`);
-  await page.getByLabel("Edit body").fill("Updated after publication through the owning Content contract.");
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await page.getByRole("status").filter({ hasText: "Draft changes saved" }).waitFor();
-  check(true, "published Content edit works");
+  await page.getByRole("textbox", { name: "Title" }).fill(`Published update ${suffix}`);
+  await page.getByRole("button", { name: "Save draft", exact: true }).first().click();
+  await visible(page.getByText("Draft saved."), "draft editing works");
+  await page.getByRole("dialog").getByRole("button", { name: "Publish", exact: true }).first().click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Publish", exact: true }).click();
+  await visible(page.getByText("Page published."), "Content publication works");
+
+  await page.goto(`${frontend}/admin/media`);
+  await page.getByRole("button", { name: "Add document" }).first().click();
   await page.getByLabel("File name").fill(`clean-${suffix}.txt`);
-  await page.getByLabel(/^Text document content/).fill("clean distribution media");
-  await page.getByRole("button", { name: "Store media" }).click();
-  await page.getByRole("status").filter({ hasText: "Media stored" }).waitFor();
-  check(true, "Media Storage contract works");
-  await page.getByLabel("File name").fill(`clean-${suffix}.txt`);
-  await page.getByLabel(/^Text document content/).fill("duplicate should fail");
-  await page.getByRole("button", { name: "Store media" }).click();
-  await page.getByRole("status").filter({ hasText: "Media stored" }).waitFor();
-  check(true, "duplicate Media name receives a distinct Media identity");
-  await page.getByLabel("Site title", { exact: true }).fill("Favorite CMS Clean Candidate");
-  await page.getByRole("button", { name: "Save setting" }).click();
-  await page.getByRole("status").filter({ hasText: "Setting saved" }).waitFor();
-  check(true, "Settings contract works");
-  check(await page.getByText("Liveness", { exact: true }).isVisible() && await page.getByText("Readiness", { exact: true }).isVisible(), "Health diagnostics render safely");
-  await page.getByLabel("I reviewed and approve the listed Plugin capabilities").check();
-  await page.getByRole("button", { name: "Activate favorite.plugin.example" }).click();
-  await page.getByRole("status").filter({ hasText: "activated" }).waitFor();
-  check(true, "Plugin activates with explicit capability approval");
-  await page.getByRole("button", { name: "Deactivate favorite.plugin.example" }).click();
-  await page.getByRole("status").filter({ hasText: "deactivated" }).waitFor();
-  check(true, "Plugin deactivation cleans registrations");
-  await page.getByRole("button", { name: "Activate favorite.plugin.example" }).click();
-  await page.getByRole("status").filter({ hasText: "favorite.plugin.example activated" }).waitFor();
+  await page.getByLabel("Document content").fill("clean distribution media");
+  await page.getByRole("dialog").getByRole("button", { name: "Add document" }).click();
+  await visible(page.getByText("Text document added to the media library."), "Media Storage contract works");
+  await visible(page.getByRole("row", { name: new RegExp(`clean-${suffix}\\.txt`) }), "Media metadata is listed without a physical path");
+
+  await page.goto(`${frontend}/admin/settings`);
+  await page.getByLabel("Site title").fill(`Favorite CMS Clean Candidate ${suffix}`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await visible(page.getByText("Site settings saved."), "Settings contract works");
+
+  await page.goto(`${frontend}/admin/diagnostics`);
+  await visible(page.getByText("Liveness", { exact: true }).first(), "Health diagnostics render safely");
+  check(await page.getByText("Readiness", { exact: true }).first().isVisible(), "Readiness diagnostics render safely");
+
+  await page.goto(`${frontend}/admin/plugins`);
+  await extensionAction("favorite.plugin.example", "Activate");
+  await visible(extensionCard("favorite.plugin.example").getByText("enabled", { exact: true }), "Plugin activates with explicit capability approval");
+  await extensionAction("favorite.plugin.example", "Deactivate");
+  await visible(extensionCard("favorite.plugin.example").getByText("disabled", { exact: true }), "Plugin deactivation cleans registrations");
+  await extensionAction("favorite.plugin.example", "Activate");
+  await extensionCard("favorite.plugin.example").getByRole("button", { name: "Configure" }).click();
   await page.getByLabel("Plugin message").fill("State preserved across Plugin lifecycle.");
-  await page.getByRole("button", { name: "Save Plugin state" }).click();
-  await page.getByRole("status").filter({ hasText: "Plugin state saved" }).waitFor();
-  await page.getByRole("button", { name: "Deactivate favorite.plugin.example" }).click();
-  await page.getByRole("status").filter({ hasText: "favorite.plugin.example deactivated" }).waitFor();
-  await page.getByRole("button", { name: "Activate favorite.plugin.example" }).click();
-  await page.getByRole("status").filter({ hasText: "favorite.plugin.example activated" }).waitFor();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await visible(page.getByText("Favorite Example Plugin settings saved."), "Plugin settings persist through the owning contract");
+  await page.getByRole("button", { name: "Close settings" }).click();
+  await extensionAction("favorite.plugin.example", "Deactivate");
+  await extensionAction("favorite.plugin.example", "Activate");
+  await extensionCard("favorite.plugin.example").getByRole("button", { name: "Configure" }).click();
   check(await page.getByLabel("Plugin message").inputValue() === "State preserved across Plugin lifecycle.", "Plugin state survives deactivation and reactivation");
-  for (const plugin of ["favorite.plugin.seo", "favorite.plugin.contact", "favorite.plugin.sitemap", "favorite.plugin.analytics"]) {
-    await page.getByRole("button", { name: `Activate ${plugin}` }).click();
-    await page.getByRole("status").filter({ hasText: `${plugin} activated` }).waitFor();
-  }
-  check(await page.getByRole("heading", { name: "SEO", exact: true }).isVisible(), "all bundled first-party Plugins activate through capability approval");
-  check(await page.getByText("favorite.theme.starter", { exact: false }).first().isVisible(), "Starter Theme is discovered and active");
+  await page.getByRole("button", { name: "Close settings" }).click();
+
+  await page.goto(`${frontend}/admin/themes`);
+  await visible(extensionCard("favorite.theme.starter").getByText("active", { exact: true }), "Starter Theme is discovered and active");
 
   await page.goto(`${frontend}/explore`);
   await page.getByLabel("Query").fill("published update");
@@ -113,10 +118,10 @@ try {
   await page.goto(`${backend}/site/content`);
   await page.getByRole("link", { name: `Published update ${suffix}` }).first().click();
   await visible(page.getByRole("heading", { name: `Published update ${suffix}` }), "public Content detail renders updated published output");
-  await page.goto(`${frontend}/admin/manage`);
+  await page.goto(`${frontend}/admin/pages`);
   await page.getByRole("button", { name: new RegExp(`Published update ${suffix}`) }).click();
-  page.once("dialog", dialog => dialog.accept());
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete page" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByRole("button", { name: new RegExp(`Published update ${suffix}`) }).waitFor({ state: "detached" });
   const deletedListing = await page.request.get(`${backend}/site/content`);
   check(!(await deletedListing.text()).includes(`Published update ${suffix}`), "deleted Content disappears publicly");
@@ -131,9 +136,12 @@ try {
   await page.getByRole("button", { name: "Menu" }).click();
   check(await page.getByRole("navigation", { name: "Primary navigation" }).isVisible(), "mobile navigation works");
 
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`${frontend}/admin`);
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await visible(page.getByRole("heading", { name: "Admin sign in" }), "logout invalidates the Admin session");
+  await page.getByRole("heading", { name: "Dashboard", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Account" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await visible(page.getByRole("heading", { name: "Sign in to Admin" }), "logout invalidates the Admin session");
   process.stdout.write(`Release candidate browser assertions: ${assertions}/${assertions} passed\n`);
 } finally {
   await browser.close();

@@ -67,6 +67,14 @@ class ExtensionManager:
         entry.state = ExtensionState.UNINSTALLED
         entry.failure = None
 
+    def remove(self, extension_id: str) -> None:
+        entry = self._entry(extension_id)
+        if entry.state is ExtensionState.ENABLED:
+            raise ManifestValidationError("An enabled Extension cannot be removed")
+        if entry.runtime is not None:
+            _call_optional(entry.runtime, "unregister")
+        del self._entries[extension_id]
+
     def enable(self, extension_id: str) -> bool:
         entry = self._entry(extension_id)
         try:

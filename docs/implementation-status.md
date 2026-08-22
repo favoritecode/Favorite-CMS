@@ -873,7 +873,7 @@ Release: `favorite-cms` version `0.1.0`
 Implemented:
 
 - Improved generic Content authoring with explicit draft/public guidance, bounded field help, safe plain-text preview, clearer save/publish feedback, and accessible lifecycle actions. Corrected Content edits to preserve Content-owned SEO metadata instead of replacing metadata with an empty object.
-- Exposed optional Content-owned SEO fields in Admin through the existing authenticated Content/SEO Plugin API: description, canonical path with origin-aware preview, robots, Open Graph title/description/image, safe defaults, and draft privacy guidance.
+- Exposed optional Content-owned SEO fields in Admin through the existing authenticated Content/SEO Plugin API: SEO title, meta description, canonical path with origin-aware preview, robots, Open Graph title/description/image, safe defaults, and draft privacy guidance. Empty SEO titles retain the Content-title fallback, and existing metadata records remain compatible.
 - Added a Notification-owned aggregate delivery summary for the Contact Plugin. Admin displays only pending/delivered/failed/attempt counts and provider availability; recipients, payloads, credentials, adapters, and provider internals remain hidden. The no-provider state is reported honestly.
 - Clarified the supported Media form as bounded UTF-8 plain text, surfaced filename/type/MIME/size limits, documented distinct identities for duplicate names, and retained Media-to-Storage ownership with no physical path exposure. Binary Media remains deferred.
 - Expanded declarative Theme/Plugin developer documentation with minimal package examples, manifest/contribution structure, lifecycle cleanup and rollback, scoped state, testing, distribution, and prohibited behaviors.
@@ -977,3 +977,17 @@ External limitations remain explicit: live PostgreSQL, PostgreSQL-native backup/
 Architecture review: PASS. No ownership change, duplicate infrastructure, automatic migration/installation, hidden authorization, universal administrator, marketplace, remote execution, business feature, or Phase 27 functionality was introduced.
 
 Phase 26 gate: PASS. Favorite CMS 0.1.0 is release ready within the documented operator/provider boundaries. Phase 27 was not started.
+
+## Administration and local extension package expansion
+
+Status: In progress on the current development branch; release remains `0.1.0`.
+
+- Added UserEngine role membership/listing contracts, Authentication-owned password reset, account enable/disable, and permission-filtered Admin Users APIs/UI. Permanent deletion remains intentionally unavailable so identity/audit ownership is preserved.
+- Added PermissionEngine-owned role definitions, protected built-in roles, custom role lifecycle, explicit permission assignment, and a readable Admin permission matrix. `site-owner` contains the fixed current administration grants explicitly; it never bypasses PermissionEngine and future grants require a deliberate release change.
+- Added secret-free AuditEngine records for sensitive administration and extension lifecycle actions.
+- Added Storage-scoped local Theme/Plugin ZIP validation, staging, install, manual update, rollback, and inactive uninstall. Uploaded Plugins remain declarative-only and executable content is rejected; there is no sandbox, marketplace, remote download, or arbitrary code loading.
+- Added four deterministic migrations: User role membership, Permission role definitions, Audit records, and Extension package registry.
+- Added Users, Roles & permissions, Theme/Plugin upload, update, and uninstall UI through the existing Next.js → FastAPI → API/Permission → owner transport.
+- Built-in roles are inspectable but release-managed: Admin cannot rename them, delete them, or silently narrow their explicit grants. Operators cannot disable their current identity or remove their own `site-owner` membership.
+- New and reset passwords are validated by Authentication on the backend before related User state is created; the Admin minimum is 12 characters.
+- Uploaded Theme HTML/CSS remains presentation-only and rejects executable browser content or external stylesheet loading; uploaded Plugins remain non-executable declarative packages.

@@ -55,8 +55,8 @@ def create_app(*, on_started: Callable[[Kernel], None] | None = None) -> FastAPI
         if route.route_type is RouteType.API:
             api = active_kernel.container.resolve("engine.api", APIEngine)
             raw = await request.body()
-            if len(raw) > 1_048_576:
-                result = api.invalid_request("Request body is too large", request_id=request_id)
+            if len(raw) > 7_000_000:
+                return JSONResponse({"success": False, "error": {"code": "payload_too_large", "message": "Request body is too large"}, "request_id": request_id}, 413)
             else:
                 try: body = json.loads(raw) if raw else None
                 except (UnicodeError, json.JSONDecodeError):

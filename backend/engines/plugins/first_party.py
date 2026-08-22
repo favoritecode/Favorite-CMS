@@ -148,6 +148,11 @@ class FirstPartySuiteRuntime:
             if projection:
                 title, description, canonical, robots = projection.title, projection.description, projection.canonical, projection.robots
                 og_title, og_description, og_image = projection.open_graph_title, projection.open_graph_description, projection.open_graph_image
+        safe_title = escape(title, quote=True)
+        if "<title>" in body and "</title>" in body:
+            before, remainder = body.split("<title>", 1)
+            _, after = remainder.split("</title>", 1)
+            body = before + f"<title>{safe_title}</title>" + after
         tags = [f'<meta name="robots" content="{escape(robots, quote=True)}">',
                 f'<meta property="og:site_name" content="{escape(str(config["site_title"]), quote=True)}">',
                 f'<meta property="og:title" content="{escape(og_title, quote=True)}">', '<meta property="og:type" content="website">']
@@ -262,7 +267,7 @@ def _body_or_empty(query: Mapping[str, str], body: object) -> object:
     if body is not None and not isinstance(body, dict): raise APIValidationError("Plugin request is invalid")
     return body
 def _seo_content_input(query: Mapping[str, str], body: object) -> object:
-    fields = {"description", "canonical_path", "robots", "open_graph_title",
+    fields = {"title", "description", "canonical_path", "robots", "open_graph_title",
               "open_graph_description", "open_graph_image"}
     if body is None:
         if set(query) != {"content_id"} or not query["content_id"].strip():
@@ -271,9 +276,10 @@ def _seo_content_input(query: Mapping[str, str], body: object) -> object:
     if query or not isinstance(body, dict) or set(body) != {"content_id", "metadata"}:
         raise APIValidationError("Content SEO request is invalid")
     metadata = body["metadata"]
-    if not isinstance(metadata, dict) or set(metadata) != fields or any(not isinstance(metadata[key], str) for key in fields):
+    legacy = fields - {"title"}
+    if not isinstance(metadata, dict) or frozenset(metadata) not in {frozenset(fields), frozenset(legacy)} or any(not isinstance(metadata[key], str) for key in metadata):
         raise APIValidationError("Content SEO metadata is invalid")
-    return body
+    return {**body, "metadata": {"title": "", **metadata}}
 def _empty(query: Mapping[str, str], body: object) -> object:
     if query or body is not None: raise APIValidationError("Plugin request contains unsupported input")
     return None

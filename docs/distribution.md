@@ -45,7 +45,7 @@ Normal backend startup never applies migrations.
 
 ## Installation
 
-The caller chooses the initial role and every authorization. No administrator role or implicit grant exists. Repeat `--authorization` for each required permission using:
+The caller chooses the initial role and every authorization. Authorization always remains explicit in PermissionEngine; no role bypasses it. The protected built-in `site-owner` role contains a fixed, inspectable set of explicit `0.1.0` administration grants. It is not a wildcard and future permissions are not automatically added. Other roles have no implicit grants. Repeat `--authorization` for each additional/deployment-specific permission using:
 
 ```text
 permission-id:owner:action:resource-type
@@ -57,15 +57,17 @@ Example structure (identifiers must match registered platform permissions):
 favorite-cms install --email <address> --display-name <name> --role <caller-role> --authorization <permission:owner:action:resource> --password-stdin
 ```
 
-For a first operator who should see every bundled management area, the caller may explicitly repeat
-`--authorization` with the five current Admin contracts below. This is an operator choice, not a
-built-in administrator role or implicit grant:
+For a restricted first operator, select a custom role and repeat only the required tuples. For a full
+operator, select `site-owner`; the following representative grants are visible and release-managed in
+**Administration → Roles & permissions** (the complete canonical matrix is authoritative):
 
 ```text
 admin.content.manage:application.admin.platform:manage:admin_content
 admin.media.manage:application.admin.platform:manage:admin_media
 admin.settings.manage:application.admin.platform:manage:admin_settings
 admin.extensions.manage:application.admin.platform:manage:admin_extensions
+admin.users.manage:application.admin.platform:manage:admin_users
+admin.roles.manage:application.admin.platform:manage:admin_roles
 admin.diagnostics.view:application.admin.platform:view:admin_diagnostics
 platform.content.create:application.admin.platform:create:content
 platform.content.read:application.admin.platform:read:content
@@ -79,9 +81,25 @@ platform.media.update:application.admin.platform:update:media
 platform.media.delete:application.admin.platform:delete:media
 platform.setting.read:application.admin.platform:read:setting
 platform.setting.write:application.admin.platform:update:setting
+platform.user.create:application.admin.platform:create:user
+platform.user.read:application.admin.platform:read:user
+platform.user.update:application.admin.platform:update:user
+platform.user.disable:application.admin.platform:disable:user
+platform.user.reset_password:application.admin.platform:reset_password:user
+platform.user.assign_roles:application.admin.platform:assign_roles:user
+platform.role.create:application.admin.platform:create:role
+platform.role.read:application.admin.platform:read:role
+platform.role.update:application.admin.platform:update:role
+platform.role.delete:application.admin.platform:delete:role
+platform.role.assign_permissions:application.admin.platform:assign_permissions:role
+platform.extension.install:application.admin.platform:install:extension_package
+platform.extension.activate:application.admin.platform:activate:extension_package
+platform.extension.deactivate:application.admin.platform:deactivate:extension_package
+platform.extension.update:application.admin.platform:update:extension_package
+platform.extension.uninstall:application.admin.platform:uninstall:extension_package
 ```
 
-The first five permissions expose Admin modules. The remaining permissions authorize the corresponding owning Engine operations. Selecting only a subset produces an intentionally restricted operator.
+The Admin permissions expose modules. Domain and administration permissions authorize the corresponding owning Engine operations, including Users, Roles, and local extension package lifecycle. Selecting only a subset on a custom role produces an intentionally restricted operator.
 
 These tuples are intentionally explicit and technical in `0.1.0`: the installer does not infer an administrator role or hidden grant set. A future permission-preset UX would require a separately documented contract. Operators should retain a reviewed deployment-specific list rather than copying permissions they do not intend to grant.
 
