@@ -14,7 +14,7 @@
     "scripts/start-local-cms.ps1", "scripts/install-local-cms-autostart.ps1",
     "docs/distribution.md", "docs/extension-development.md", "docs/application-plugin-foundation.md",
     "docs/tool-worker-and-extension-guide.md", "docs/generating-plugins-themes-and-tools.md",
-    "docs/vps-and-local-hosting.md", "docs/runbooks"
+    "docs/vps-and-local-hosting.md", "docs/complete-installation-guide.md", "docs/runbooks"
   ],
   "must_not_ship": [
     ".git", ".github", ".venv", "node_modules", ".next", "__pycache__", "*.pyc",

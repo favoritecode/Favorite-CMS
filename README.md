@@ -73,6 +73,7 @@ Operators explicitly granted `admin.diagnostics.view` receive a redacted system-
 
 See [distribution documentation](docs/distribution.md), [deployment runbook](docs/runbooks/deployment.md), and [operations runbook](docs/runbooks/operations.md).
 For an end-to-end Ubuntu VPS layout and the existing Windows local/autostart flow, see [VPS and local hosting](docs/vps-and-local-hosting.md).
+For copy-ready commands covering a fresh Windows PC, Ubuntu VPS, PostgreSQL, systemd, Nginx, verification, updates, and troubleshooting, see the [complete installation guide](docs/complete-installation-guide.md).
 
 ## Development
 

@@ -2,6 +2,8 @@
 
 This guide deploys the existing Favorite CMS 0.1.0 architecture. It does not add automatic migration/installation, a marketplace, arbitrary Plugin execution, or a vendor-specific provider.
 
+For a complete copy-ready Windows and Ubuntu VPS walkthrough—including configuration, PostgreSQL, systemd, Nginx, verification, and troubleshooting—use [Complete installation guide](complete-installation-guide.md).
+
 ## Supported topology
 
 - Nginx or another operator-selected TLS reverse proxy
@@ -63,6 +65,7 @@ printf '%s' "$INITIAL_PASSWORD" | .venv/bin/favorite-cms install \
   --email operator@example.com \
   --display-name "Site Operator" \
   --role site-owner \
+  --authorization admin.diagnostics.view:application.admin.platform:view:admin_diagnostics \
   --password-stdin
 .venv/bin/favorite-cms status
 unset INITIAL_PASSWORD
