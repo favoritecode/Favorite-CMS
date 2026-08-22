@@ -48,3 +48,20 @@ test("mobile administration keeps account and navigation controls accessible", a
   await expect(page.getByRole("button", { name: "Account" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open menu" })).toBeVisible();
 });
+
+test("authorized operator manages a Plugin-owned application through real contracts", async ({ page }) => {
+  await login(page);
+  await page.goto("/admin/applications");
+  await expect(page.getByRole("heading", { name: "Applications" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Products/ })).toBeVisible();
+  await page.getByRole("button", { name: "Add record" }).click();
+  await page.getByLabel("name").fill("Browser catalog item");
+  await page.getByRole("button", { name: "Save record" }).click();
+  await expect(page.getByText("Application record created.")).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: "Browser catalog item" });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("name").fill("Updated browser item");
+  await page.getByRole("button", { name: "Save record" }).click();
+  await expect(page.getByText("Updated browser item")).toBeVisible();
+});

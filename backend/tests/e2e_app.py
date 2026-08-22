@@ -7,6 +7,7 @@ from backend.core.extensions import ExtensionManifest, ExtensionManager
 from backend.database.migrations import DatabaseMigrationEngine
 from backend.engines.authentication import AuthenticationEngine
 from backend.engines.content import ContentEngine
+from backend.engines.domains import DomainEngine, DomainEntityContract, DomainField, DomainFieldKind
 from backend.engines.permissions import PermissionDefinition, PermissionEngine, RoleGrant
 from backend.engines.plugins import PluginEngine
 from backend.engines.search import SearchDocument, SearchEngine
@@ -47,6 +48,7 @@ def seed(kernel: Kernel) -> None:
         permissions.grant_role(RoleGrant("e2e-operator", permission_id, OWNER))
     for permission_id in ("admin.content.manage", "admin.media.manage", "admin.settings.manage", "admin.extensions.manage", "admin.users.manage", "admin.roles.manage", "admin.diagnostics.view"):
         permissions.grant_role(RoleGrant("e2e-operator", permission_id, OWNER))
+    permissions.grant_role(RoleGrant("e2e-operator", "admin.applications.manage", OWNER))
     for permission_id in tuple(f"platform.user.{action}" for action in ("create", "read", "update", "disable", "reset_password", "assign_roles")) + tuple(
         f"platform.role.{action}" for action in ("create", "read", "update", "delete", "assign_permissions")) + tuple(
         f"platform.extension.{action}" for action in ("install", "activate", "deactivate", "update", "uninstall")):
@@ -61,6 +63,18 @@ def seed(kernel: Kernel) -> None:
     auth = authentication.login(email="operator@example.test", password=PASSWORD)
     assert auth.token is not None
     context = authentication.resolve(auth.token.reveal())
+    application_owner = "tests.plugin.catalog"
+    for action in ("create", "read", "update", "delete"):
+        permission_id = f"{application_owner}.product.{action}"
+        permissions.register(PermissionDefinition(permission_id, application_owner, action, "plugin_domain"))
+        permissions.grant_role(RoleGrant("e2e-operator", permission_id, application_owner))
+    kernel.container.resolve("engine.domains", DomainEngine).register(DomainEntityContract(
+        owner=application_owner,
+        entity_type="product",
+        label="Products",
+        fields=(DomainField("name", DomainFieldKind.STRING, required=True, maximum_length=120),),
+        permissions={action: f"{application_owner}.product.{action}" for action in ("create", "read", "update", "delete")},
+    ))
     content = kernel.container.resolve("engine.content", ContentEngine)
     page = content.create("page", title="Welcome to Favorite CMS", data={"slug": "welcome", "body": "Rendered by the backend presentation pipeline."}, metadata={}, authentication=context)
     content.publish(page.content_id, context)

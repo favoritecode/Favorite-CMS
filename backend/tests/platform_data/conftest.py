@@ -31,6 +31,8 @@ def data_kernel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Ker
             "platform.permission.002",
             "platform.audit.001",
             "platform.extension_package.001",
+            "platform.domain.001",
+            "platform.tool.001",
         }
     assert migrations.upgrade() == ()
     yield kernel

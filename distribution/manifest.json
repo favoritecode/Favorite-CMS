@@ -10,7 +10,7 @@
     "frontend/next.config.ts", "frontend/postcss.config.mjs", "frontend/tsconfig.json",
     "themes/favorite.theme.starter", "plugins/favorite.plugin.example", "plugins/favorite.plugin.seo",
     "plugins/favorite.plugin.contact", "plugins/favorite.plugin.sitemap", "plugins/favorite.plugin.analytics", "storage/.gitkeep",
-    "docs/distribution.md", "docs/extension-development.md", "docs/runbooks"
+    "docs/distribution.md", "docs/extension-development.md", "docs/application-plugin-foundation.md", "docs/runbooks"
   ],
   "must_not_ship": [
     ".git", ".github", ".venv", "node_modules", ".next", "__pycache__", "*.pyc",

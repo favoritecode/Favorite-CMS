@@ -19,6 +19,8 @@ from backend.engines.permissions import PermissionEngine
 from backend.engines.users import UserEngine
 from backend.engines.audit import AuditEngine
 from backend.engines.content import ContentEngine
+from backend.engines.domains import DomainEngine
+from backend.engines.tools import ToolEngine
 from backend.engines.localization import LocalizationEngine
 from backend.engines.media import MediaEngine
 from backend.engines.menu import MenuEngine
@@ -35,6 +37,7 @@ from backend.admin import AdminEngine, AdminPlatformEngine
 from backend.recovery import BackupRecoveryEngine
 from backend.update import UpdateEngine
 from backend.operations import HealthEngine, InstallationEngine
+from backend.tooling import ToolPlatformEngine
 
 
 def build_kernel(*, console_logging: bool = False) -> Kernel:
@@ -61,6 +64,8 @@ def build_kernel(*, console_logging: bool = False) -> Kernel:
     engines.register(PermissionEngine())
     engines.register(SettingsEngine())
     engines.register(ContentEngine())
+    engines.register(DomainEngine())
+    engines.register(ToolEngine())
     engines.register(MediaEngine())
     engines.register(SearchEngine())
     engines.register(LocalizationEngine())
@@ -72,6 +77,7 @@ def build_kernel(*, console_logging: bool = False) -> Kernel:
     engines.register(RoutingEngine())
     engines.register(APIEngine())
     engines.register(RenderingEngine())
+    engines.register(ToolPlatformEngine())
     engines.register(AdminEngine())
     engines.register(BackupRecoveryEngine())
     engines.register(UpdateEngine())

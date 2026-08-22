@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Activity, Blocks, ChevronDown, Files, Gauge, Image as ImageIcon, LockKeyhole, LogOut, Menu, Navigation, Newspaper, Palette, Settings, ShieldCheck, UserRound, Users, X } from "lucide-react";
+import { Activity, AppWindow, Blocks, ChevronDown, Files, Gauge, Image as ImageIcon, LockKeyhole, LogOut, Menu, Navigation, Newspaper, Palette, Settings, ShieldCheck, UserRound, Users, X } from "lucide-react";
 import { adminRequest, isAuthenticationError } from "@/lib/admin-client";
 import type { AdminModule, AdminSection } from "@/lib/admin-types";
 import { ToastProvider } from "./admin-ui";
@@ -23,6 +23,7 @@ const navigation: { label: string; items: NavigationItem[] }[] = [
   ] },
   { label: "Extensions", items: [
     { id: "plugins", label: "Plugins", href: "/admin/plugins", icon: Blocks, module: "admin.extensions" },
+    { id: "applications", label: "Applications", href: "/admin/applications", icon: AppWindow, module: "admin.applications" },
   ] },
   { label: "System", items: [
     { id: "users", label: "Users", href: "/admin/users", icon: Users, module: "admin.users" },

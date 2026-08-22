@@ -50,19 +50,20 @@ try {
   await visible(page.getByRole("heading", { name: "Pages", exact: true }), "Content management loads");
   const suffix = Date.now();
   await page.getByRole("button", { name: "New page" }).click();
+  await page.getByLabel("Visibility").selectOption("draft");
   await page.getByLabel(/^Title/).fill(`Clean candidate ${suffix}`);
   await page.getByRole("textbox", { name: "Slug" }).fill(`clean-candidate-${suffix}`);
   await page.getByLabel("Body").fill("Created through the clean distribution transport.");
-  await page.getByRole("button", { name: "Save draft", exact: true }).first().click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).first().click();
   await visible(page.getByText("Draft created."), "draft creation works");
   check(await page.getByText("draft", { exact: true }).last().isVisible(), "draft is visible in Admin");
   const draftPublic = await page.request.get(`${backend}/site/content`);
   check(!(await draftPublic.text()).includes(`Clean candidate ${suffix}`), "draft is not publicly visible");
-  await page.getByRole("textbox", { name: "Title" }).fill(`Published update ${suffix}`);
-  await page.getByRole("button", { name: "Save draft", exact: true }).first().click();
+  await page.getByRole("textbox", { name: "Title", exact: true }).fill(`Published update ${suffix}`);
+  await page.getByRole("button", { name: "Save changes", exact: true }).first().click();
   await visible(page.getByText("Draft saved."), "draft editing works");
-  await page.getByRole("dialog").getByRole("button", { name: "Publish", exact: true }).first().click();
-  await page.getByRole("dialog").last().getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByLabel("Visibility").selectOption("published");
+  await page.getByRole("button", { name: "Publish now", exact: true }).first().click();
   await visible(page.getByText("Page published."), "Content publication works");
 
   await page.goto(`${frontend}/admin/media`);

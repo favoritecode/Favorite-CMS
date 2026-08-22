@@ -8,6 +8,8 @@ A Theme lives under `themes/<theme-id>/` with a validated `theme.json` declaring
 
 Themes are presentation-only. Theme Engine owns discovery, validation, activation, and resources; Rendering resolves declared resources through Theme → Plugin → platform fallback. Activation failure preserves the previous Theme. Themes cannot register backend APIs, query Database or Storage, inspect Authentication/Permission, read environment configuration, or execute package code.
 
+For declarative business entities, generated Admin CRUD, isolated Tool jobs, Worker configuration, and the safe `[favorite-tool]` presentation contract, see [Application and isolated Tool Plugin foundation](application-plugin-foundation.md). These contracts extend the Plugin SDK without permitting uploaded executable code.
+
 Create a first-party Theme using the structure of `favorite.theme.starter`, a unique manifest identity, fully declared data-only resources, and tests for discovery, validation, activation, fallback, rollback, missing resources, accessibility, and responsive presentation.
 
 ## Declarative first-party Plugin packages

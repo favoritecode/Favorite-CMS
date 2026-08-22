@@ -20,9 +20,9 @@ class RoutePlugin:
 
 def test_plugin_route_is_owner_scoped_and_removed_on_disable(phase7_kernel: Kernel) -> None:
     identifier = "favorite.plugin.routes"; manager = phase7_kernel.extensions
-    manager.register(ExtensionManifest.from_mapping(manifest_data(id=identifier)))
+    manager.register(ExtensionManifest.from_mapping(manifest_data(id=identifier, permissions=["routing.register"])))
     plugins = phase7_kernel.container.resolve("engine.plugins", PluginEngine)
-    runtime = RoutePlugin(identifier); plugins.bind(identifier, runtime)
+    runtime = RoutePlugin(identifier); plugins.bind(identifier, runtime, granted_permissions=frozenset({"routing.register"}))
     assert plugins.activate(identifier)
     routing = phase7_kernel.container.resolve("engine.routing", RoutingEngine)
     assert routing.resolve("GET", "/plugin-page").owner == identifier
@@ -31,8 +31,8 @@ def test_plugin_route_is_owner_scoped_and_removed_on_disable(phase7_kernel: Kern
 
 def test_plugin_cannot_claim_another_route_owner(phase7_kernel: Kernel) -> None:
     identifier = "favorite.plugin.attacker"; manager = phase7_kernel.extensions
-    manager.register(ExtensionManifest.from_mapping(manifest_data(id=identifier)))
+    manager.register(ExtensionManifest.from_mapping(manifest_data(id=identifier, permissions=["routing.register"])))
     plugins = phase7_kernel.container.resolve("engine.plugins", PluginEngine)
-    plugins.bind(identifier, RoutePlugin("engine.api"))
+    plugins.bind(identifier, RoutePlugin("engine.api"), granted_permissions=frozenset({"routing.register"}))
     assert not plugins.activate(identifier)
     assert manager.state(identifier) is ExtensionState.ERROR

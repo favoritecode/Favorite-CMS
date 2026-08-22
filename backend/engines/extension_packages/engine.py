@@ -115,7 +115,7 @@ class ExtensionPackageEngine:
             raise PackageError("Extension package type does not match the requested operation")
         if names[0] != ("theme.json" if manifest.type is ExtensionType.THEME else "plugin.json"):
             raise PackageError("Extension manifest type is inconsistent")
-        self._validate_theme(files) if manifest.type is ExtensionType.THEME else self._validate_plugin(files)
+        self._validate_theme(files) if manifest.type is ExtensionType.THEME else self._validate_plugin(files, manifest)
         return manifest, files
 
     def install(self, archive: bytes, *, expected_type: ExtensionType) -> PackageResult:
@@ -263,7 +263,7 @@ class ExtensionPackageEngine:
                                             re.search(r"url\s*\(\s*['\"]?\s*(https?:|//|javascript:)", lowered)):
                 raise PackageError("Theme styles cannot load or execute external content")
 
-    def _validate_plugin(self, files: dict[str, bytes]) -> None:
+    def _validate_plugin(self, files: dict[str, bytes], manifest: ExtensionManifest) -> None:
         dangerous = {".py", ".pyc", ".pyd", ".so", ".dll", ".exe", ".js", ".mjs", ".cjs", ".sh", ".bat", ".cmd", ".ps1"}
         if any(PurePosixPath(name).suffix.casefold() in dangerous for name in files):
             raise PackageError("Uploaded Plugins must be declarative and cannot contain executable code")
@@ -272,7 +272,21 @@ class ExtensionPackageEngine:
         if "contributions.json" in files:
             try: value = json.loads(files["contributions.json"].decode("utf-8"))
             except Exception as exc: raise PackageError("Plugin contributions are invalid") from exc
-            if value != {"contributions": []}: raise PackageError("Only empty declarative contributions are supported for uploaded Plugins")
+            if value == {"contributions": []}: return
+            keys = {"schemaVersion", "permissions", "entities", "tools", "blocks"}
+            if (not isinstance(value, dict) or set(value) != keys or value.get("schemaVersion") != 1
+                    or any(not isinstance(value.get(key), list) for key in keys - {"schemaVersion"})
+                    or len(value["permissions"]) > 100 or len(value["entities"]) > 50 or len(value["tools"]) > 50
+                    or value["blocks"]):
+                raise PackageError("Plugin contributions are invalid")
+            required = set()
+            if value["permissions"]: required.add("permission.register")
+            if value["entities"]: required.add("domain.register")
+            if value["tools"]: required.add("tool.register")
+            if not required.issubset(set(manifest.permissions)):
+                raise PackageError("Plugin manifest is missing required contribution capabilities")
+            if any(not isinstance(item, dict) for key in ("permissions", "entities", "tools") for item in value[key]):
+                raise PackageError("Plugin contributions are invalid")
 
     def _materialize(self, files: dict[str, bytes]) -> TemporaryDirectory[str]:
         directory = TemporaryDirectory(prefix="favorite-extension-"); root = Path(directory.name)

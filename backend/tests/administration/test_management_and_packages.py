@@ -16,7 +16,9 @@ from backend.engines.api import APIEngine
 from backend.engines.audit import AuditEngine
 from backend.engines.authentication import AuthenticationEngine
 from backend.engines.extension_packages import ExtensionPackageEngine, PackageError
-from backend.engines.permissions import PermissionEngine
+from backend.engines.domains import DomainEngine
+from backend.engines.tools import ToolEngine
+from backend.engines.permissions import PermissionEngine, RoleDefinition, RoleGrant
 from backend.engines.plugins import PluginEngine
 from backend.engines.routing import RoutingEngine
 from backend.engines.rendering import RenderingEngine
@@ -85,6 +87,22 @@ def _theme(identifier: str, version: str = "1.0.0", *, minimum_core: str = "0.1.
 def _plugin(identifier: str, version: str = "1.0.0") -> bytes:
     return _zip({"plugin.json": json.dumps(_manifest(identifier, "plugin", version)),
                  "contributions.json": json.dumps({"contributions": []})})
+
+
+def _application_plugin(identifier: str) -> bytes:
+    manifest = _manifest(identifier, "plugin"); manifest["permissions"] = ["permission.register", "domain.register", "tool.register"]
+    contributions = {"schemaVersion": 1,
+        "permissions": [
+            {"id": f"{identifier}.product.create", "action": "create", "resource": "plugin_domain"},
+            {"id": f"{identifier}.product.read", "action": "read", "resource": "plugin_domain"},
+            {"id": f"{identifier}.product.update", "action": "update", "resource": "plugin_domain"},
+            {"id": f"{identifier}.product.delete", "action": "delete", "resource": "plugin_domain"},
+            {"id": f"{identifier}.ocr.execute", "action": "execute", "resource": "plugin_tool"}],
+        "entities": [{"id": "product", "label": "Products", "fields": [{"id": "name", "type": "string", "required": True, "maxLength": 120}],
+            "permissions": {action: f"{identifier}.product.{action}" for action in ("create", "read", "update", "delete")}}],
+        "tools": [{"id": f"{identifier}.ocr", "label": "OCR", "description": "Isolated OCR", "executePermission": f"{identifier}.ocr.execute",
+            "worker": "default", "public": False, "fields": [{"id": "media_id", "type": "media", "required": True}]}], "blocks": []}
+    return _zip({"plugin.json": json.dumps(manifest), "contributions.json": json.dumps(contributions)})
 
 
 def test_site_owner_is_explicit_and_user_role_management_is_authorized(management_kernel: Kernel) -> None:
@@ -213,6 +231,63 @@ def test_uploaded_plugin_installation_and_active_state_restore_after_restart(tmp
     second = build_kernel(); second.bootstrap()
     try: assert second.extensions.state(result.extension_id) is ExtensionState.ENABLED
     finally: second.shutdown()
+
+
+def test_uploaded_application_plugin_registers_scoped_domain_and_tool_contracts(management_kernel: Kernel) -> None:
+    identifier = "example.plugin.application"; packages = management_kernel.container.resolve("engine.extension_packages", ExtensionPackageEngine)
+    result = packages.install(_application_plugin(identifier), expected_type=ExtensionType.PLUGIN)
+    plugins = management_kernel.container.resolve("engine.plugins", PluginEngine)
+    grants = frozenset({"permission.register", "domain.register", "tool.register"})
+    plugins.bind_uploaded_declarative(result.extension_id, granted_permissions=grants)
+    assert plugins.activate(result.extension_id)
+    assert [item.entity_type for item in management_kernel.container.resolve("engine.domains", DomainEngine).contracts(identifier)] == ["product"]
+    tools = management_kernel.container.resolve("engine.tools", ToolEngine)
+    assert [item.tool_id for item in tools.contracts(identifier)] == [f"{identifier}.ocr"]
+    assert tools.availability(identifier, f"{identifier}.ocr") == "not_configured"
+    assert plugins.deactivate(identifier)
+    assert management_kernel.container.resolve("engine.domains", DomainEngine).contracts(identifier) == ()
+    assert tools.contracts(identifier) == ()
+
+
+def test_application_admin_api_is_schema_driven_and_permission_scoped(management_kernel: Kernel) -> None:
+    identifier = "example.plugin.catalog"
+    packages = management_kernel.container.resolve("engine.extension_packages", ExtensionPackageEngine)
+    result = packages.install(_application_plugin(identifier), expected_type=ExtensionType.PLUGIN)
+    plugins = management_kernel.container.resolve("engine.plugins", PluginEngine)
+    plugins.bind_uploaded_declarative(
+        result.extension_id,
+        granted_permissions=frozenset({"permission.register", "domain.register", "tool.register"}),
+    )
+    assert plugins.activate(result.extension_id)
+
+    permissions = management_kernel.container.resolve("engine.permissions", PermissionEngine)
+    permissions.create_role(RoleDefinition("catalog-manager", "Catalog Manager"))
+    permission_ids = ("admin.applications.manage",) + tuple(
+        f"{identifier}.product.{action}" for action in ("create", "read", "update", "delete")
+    )
+    definitions = {item.permission_id: item for item in permissions.definitions()}
+    for permission_id in permission_ids:
+        definition = definitions[permission_id]
+        permissions.grant_role(RoleGrant("catalog-manager", permission_id, definition.owner))
+
+    authorized = _login(management_kernel, role="catalog-manager", email="catalog@example.com")
+    denied = _login(management_kernel, role="limited", email="catalog-denied@example.com")
+    assert _request(management_kernel, "GET", "/admin/api/applications", denied).status == 403
+
+    visible = _request(management_kernel, "GET", "/admin/api/applications", authorized)
+    assert visible.status == 200
+    assert [item["entity"] for item in visible.body["data"]] == ["product"]
+    created = _request(management_kernel, "POST", "/admin/api/applications", authorized,
+        {"owner": identifier, "entity": "product", "values": {"name": "Portable catalog item"}})
+    assert created.status == 200
+    record_id = created.body["data"]["id"]
+    changed = _request(management_kernel, "PATCH", "/admin/api/applications", authorized,
+        {"owner": identifier, "entity": "product", "id": record_id,
+         "values": {"name": "Updated catalog item"}})
+    assert changed.status == 200 and changed.body["data"]["values"]["name"] == "Updated catalog item"
+    removed = _request(management_kernel, "DELETE", "/admin/api/applications", authorized,
+        {"owner": identifier, "entity": "product", "id": record_id})
+    assert removed.status == 200
 
 
 def test_bundled_plugin_active_state_and_explicit_grants_restore_after_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

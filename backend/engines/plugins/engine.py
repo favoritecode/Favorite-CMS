@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping, Protocol, TypeVar
+import json
 
 from backend.core.container import ServiceContainer
 from backend.core.extensions import ExtensionDiscovery, ExtensionManager, ExtensionManifest, ExtensionState, ExtensionType, ManifestValidationError
@@ -19,6 +20,15 @@ class PluginRuntime(Protocol):
 
 
 T = TypeVar("T")
+_SERVICE_CAPABILITIES = {
+    "engine.settings": "settings.access", "engine.content": "content.read", "engine.media": "media.read",
+    "engine.search": "search.read", "engine.localization": "localization.read", "engine.menu": "menu.read",
+    "engine.seo": "seo.register", "engine.events": "events.access", "engine.queue": "queue.submit",
+    "engine.notifications": "notification.send", "engine.permissions": "permission.register",
+    "engine.domains": "domain.register", "engine.tools": "tool.register", "engine.routing": "routing.register",
+    "engine.api": "api.register", "engine.rendering": "rendering.register", "engine.observability": "health.register",
+    "application.admin": "admin.register",
+}
 
 
 @dataclass(frozen=True)
@@ -28,11 +38,14 @@ class PluginContext:
     _services: Mapping[str, object]
 
     def service(self, name: str, expected_type: type[T]) -> T:
+        capability = _SERVICE_CAPABILITIES.get(name)
+        if capability is not None and capability not in self.permissions:
+            raise ManifestValidationError("Plugin capability was not granted")
         try:
             value = self._services[name]
         except KeyError as exc:
             raise ManifestValidationError("Plugin requested a non-public service") from exc
-        if name in {"engine.routing", "engine.api", "engine.rendering", "engine.observability", "application.admin"}:
+        if name in {"engine.routing", "engine.api", "engine.rendering", "engine.observability", "engine.domains", "engine.tools", "engine.permissions", "application.admin"}:
             value = value.for_plugin(self.plugin_id)  # type: ignore[attr-defined]
         if not isinstance(value, expected_type):
             raise ManifestValidationError("Plugin public service has an unexpected type")
@@ -51,10 +64,10 @@ class _BoundRuntime:
 
 class PluginEngine:
     engine_id = "plugins"
-    dependencies = ("settings", "content", "media", "search", "localization", "menu", "seo")
+    dependencies = ("settings", "content", "domains", "tools", "media", "search", "localization", "menu", "seo")
     _PUBLIC_SERVICES = (
         "engine.settings", "engine.content", "engine.media", "engine.search",
-        "engine.localization", "engine.menu", "engine.seo", "engine.events",
+        "engine.localization", "engine.menu", "engine.seo", "engine.domains", "engine.tools", "engine.events",
         "engine.queue", "engine.notifications", "engine.permissions",
     )
 
@@ -125,7 +138,9 @@ class PluginEngine:
 
     def bind_uploaded_declarative(self, extension_id: str, *, granted_permissions: frozenset[str]) -> None:
         if extension_id in self._bound: return
-        self.bind(extension_id, _DeclarativeUploadedRuntime(), granted_permissions=granted_permissions)
+        try: package = self._packages[extension_id]
+        except KeyError as exc: raise ManifestValidationError("Plugin package is unavailable") from exc
+        self.bind(extension_id, _DeclarativeUploadedRuntime(package, extension_id), granted_permissions=granted_permissions)
 
     def uninstall(self, extension_id: str) -> None:
         if self._manager_required().state(extension_id) is ExtensionState.ENABLED:
@@ -139,7 +154,11 @@ class PluginEngine:
         if manifest.type is not ExtensionType.PLUGIN or not set(manifest.permissions).issubset(granted_permissions):
             return False
         context = PluginContext(extension_id, granted_permissions, self._services)
-        result = self._manager_required().replace(extension_id, manifest, _BoundRuntime(_DeclarativeUploadedRuntime(), context))
+        result = self._manager_required().replace(
+            extension_id,
+            manifest,
+            _BoundRuntime(_DeclarativeUploadedRuntime(package, extension_id), context),
+        )
         if result:
             self._packages[extension_id] = package; self._bound.add(extension_id); self._grants[extension_id] = granted_permissions
         return result
@@ -203,6 +222,12 @@ class PluginEngine:
         return self._manager
 
     def _cleanup_phase7(self, owner: str) -> None:
+        domains = self._public_services.get("engine.domains")
+        if domains is not None: domains.unregister_owner(owner)  # type: ignore[attr-defined]
+        tools = self._public_services.get("engine.tools")
+        if tools is not None: tools.unregister_owner(owner)  # type: ignore[attr-defined]
+        permissions = self._public_services.get("engine.permissions")
+        if permissions is not None: permissions.unregister_owner(owner)  # type: ignore[attr-defined]
         for name in ("engine.observability", "application.admin", "engine.api", "engine.rendering", "engine.routing"):
             service = self._public_services.get(name)
             if service is not None:
@@ -210,8 +235,39 @@ class PluginEngine:
 
 
 class _DeclarativeUploadedRuntime:
-    """No-code runtime for uploaded declarative Plugin packages."""
-    def register(self, context: PluginContext) -> None: self._context = context
+    """No-code runtime for uploaded declarative Domain/Tool Plugin packages."""
+    def __init__(self, package: Path, plugin_id: str) -> None: self._package = package; self._plugin_id = plugin_id
+    def register(self, context: PluginContext) -> None:
+        from backend.engines.domains import DomainEntityContract, DomainField, DomainFieldKind, PluginDomains
+        from backend.engines.permissions import PermissionDefinition, PluginPermissions
+        from backend.engines.tools import PluginTools, ToolContract, ToolFieldKind, ToolInputField
+        path = self._package / "contributions.json"
+        if not path.exists(): return
+        try: value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc: raise ManifestValidationError("Plugin contributions are invalid") from exc
+        if value == {"contributions": []}: return
+        if not isinstance(value, dict) or set(value) != {"schemaVersion", "permissions", "entities", "tools", "blocks"} or value["schemaVersion"] != 1:
+            raise ManifestValidationError("Plugin contributions are invalid")
+        if not all(isinstance(value[key], list) for key in ("permissions", "entities", "tools", "blocks")) or value["blocks"]:
+            raise ManifestValidationError("Plugin contributions are invalid")
+        permissions = context.service("engine.permissions", PluginPermissions)
+        domains = context.service("engine.domains", PluginDomains)
+        tools = context.service("engine.tools", PluginTools)
+        try:
+            for item in value["permissions"]:
+                permissions.register(PermissionDefinition(str(item["id"]), self._plugin_id, str(item["action"]), str(item["resource"]),
+                    allow_owner=bool(item.get("allowOwner", False)), allow_public=bool(item.get("allowPublic", False))))
+            for item in value["entities"]:
+                fields = tuple(DomainField(str(field["id"]), DomainFieldKind(str(field["type"])), bool(field.get("required", False)),
+                    int(field["maxLength"]) if "maxLength" in field else None, tuple(str(choice) for choice in field.get("choices", []))) for field in item["fields"])
+                domains.register(DomainEntityContract(str(item["id"]), self._plugin_id, str(item["label"]), fields,
+                    {key: str(permission) for key, permission in item["permissions"].items()}))
+            for item in value["tools"]:
+                fields = tuple(ToolInputField(str(field["id"]), ToolFieldKind(str(field["type"])), bool(field.get("required", False)),
+                    int(field["maxLength"]) if "maxLength" in field else None, tuple(str(choice) for choice in field.get("choices", []))) for field in item["fields"])
+                tools.register(ToolContract(str(item["id"]), self._plugin_id, str(item["label"]), str(item.get("description", "")), fields,
+                    str(item["executePermission"]), str(item.get("worker", "default")), bool(item.get("public", False))))
+        except (KeyError, TypeError, ValueError) as exc: raise ManifestValidationError("Plugin contributions are invalid") from exc
     def activate(self) -> None: pass
     def deactivate(self) -> None: pass
     def unregister(self) -> None: pass

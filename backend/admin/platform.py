@@ -16,6 +16,8 @@ from backend.core.container import ServiceContainer
 from backend.core.extensions import ExtensionManager, ExtensionState, ManifestValidationError
 from backend.engines.api import APIBinary, APIEngine, APIOperation, APIRequest, APIResourceNotFound, APIValidationError
 from backend.engines.content import ContentEngine, ContentField, ContentQuery, ContentSeoMetadata, ContentState, ContentVisibility, ContentType, FieldKind
+from backend.engines.domains import DomainEngine
+from backend.engines.permissions import PermissionDenied
 from backend.engines.content.engine import content_visibility
 from backend.engines.localization import Language, Locale, LocalizationEngine, TranslationResource
 from backend.engines.media import MediaAccessContract, MediaEngine, MediaType
@@ -37,6 +39,7 @@ from backend.operations.health import HealthEngine
 OWNER = "application.admin.platform"
 PERMISSIONS = {"content": "admin.content.manage", "media": "admin.media.manage",
                "settings": "admin.settings.manage", "extensions": "admin.extensions.manage",
+               "applications": "admin.applications.manage",
                "users": "admin.users.manage", "roles": "admin.roles.manage",
                "diagnostics": "admin.diagnostics.view"}
 CONTENT_PERMISSIONS = {action: f"platform.content.{action}" for action in ("create", "read", "update", "delete", "publish", "archive")}
@@ -56,7 +59,7 @@ SITE_SETTING_DEFAULTS = {
 
 class AdminPlatformEngine:
     engine_id = "admin_platform"
-    dependencies = ("admin", "content", "media", "settings", "search", "localization", "plugins", "themes", "extension_packages", "audit", "observability", "rendering")
+    dependencies = ("admin", "content", "domains", "media", "settings", "search", "localization", "plugins", "themes", "extension_packages", "audit", "observability", "rendering")
     def __init__(self) -> None: self._container: ServiceContainer | None = None; self.ready = False
     def initialize(self, container: ServiceContainer) -> None:
         self._container = container; container.register("application.admin.platform", self)
@@ -67,7 +70,7 @@ class AdminPlatformEngine:
             action = "view" if area == "diagnostics" else "manage"
             permissions.register(PermissionDefinition(permission_id, OWNER, action, f"admin_{area}"))
         admin = self._service("application.admin", AdminEngine)
-        destinations = {"content": "/admin/pages", "media": "/admin/media",
+        destinations = {"content": "/admin/pages", "media": "/admin/media", "applications": "/admin/applications",
                         "settings": "/admin/settings", "extensions": "/admin/themes",
                         "users": "/admin/users", "roles": "/admin/roles",
                         "diagnostics": "/admin/diagnostics"}
@@ -84,6 +87,7 @@ class AdminPlatformEngine:
                      APIOperation("platform.media.delivery", OWNER, _query_only, self._media_delivery, lambda value: value))
         self._register(api, "settings", "/admin/api/settings", ("GET", "PATCH"), self._settings, "settings")
         self._register(api, "extensions", "/admin/api/extensions", ("GET", "POST"), self._extensions, "extensions")
+        self._register(api, "applications", "/admin/api/applications", ("GET", "POST", "PATCH", "DELETE"), self._applications, "applications")
         self._register(api, "users", "/admin/api/users", ("GET", "POST", "PATCH"), self._users, "users")
         self._register(api, "roles", "/admin/api/roles", ("GET", "POST", "PATCH", "DELETE"), self._roles, "roles")
         self._register(api, "diagnostics", "/admin/api/diagnostics", ("GET",), self._diagnostics, "diagnostics")
@@ -317,6 +321,29 @@ class AdminPlatformEngine:
         plugins = self._service("engine.plugins", PluginEngine); active_theme = self._service("engine.themes", ThemeEngine).active_theme
         managed = self._service("engine.extension_packages", ExtensionPackageEngine).managed_ids()
         return [_extension_value(manager, plugins, identifier, active_theme, identifier in managed) for identifier in manager.registered()]
+
+    def _applications(self, request: APIRequest, data: object) -> object:
+        domains = self._service("engine.domains", DomainEngine)
+        if request.route.method == "GET":
+            output = []
+            for contract in domains.contracts():
+                try: records = domains.list(contract.owner, contract.entity_type, request.authentication)
+                except PermissionDenied: continue
+                output.append({"owner": contract.owner, "entity": contract.entity_type, "label": contract.label,
+                    "fields": [{"id": field.field_id, "type": field.kind.value, "required": field.required,
+                                "max_length": field.maximum_length, "choices": list(field.choices)} for field in contract.fields],
+                    "records": [_domain_record_value(item) for item in records]})
+            return output
+        if not isinstance(data, dict) or not {"owner", "entity"}.issubset(data): raise APIValidationError("Application record request is invalid")
+        owner, entity = str(data["owner"]), str(data["entity"])
+        if request.route.method == "POST":
+            if set(data) != {"owner", "entity", "values"} or not isinstance(data["values"], dict): raise APIValidationError("Application record request is invalid")
+            return _domain_record_value(domains.create(owner, entity, data["values"], request.authentication))
+        if request.route.method == "PATCH":
+            if set(data) != {"owner", "entity", "id", "values"} or not isinstance(data["values"], dict): raise APIValidationError("Application record request is invalid")
+            return _domain_record_value(domains.update(owner, entity, str(data["id"]), data["values"], request.authentication))
+        if set(data) != {"owner", "entity", "id"}: raise APIValidationError("Application record request is invalid")
+        domains.delete(owner, entity, str(data["id"]), request.authentication); return {"deleted": True}
 
     def _users(self, request: APIRequest, data: object) -> object:
         users = self._service("engine.users", UserEngine)
@@ -627,6 +654,7 @@ def _safe_media_filename(value: str) -> str:
     return f"{stem[:max(1, 254-len(suffix))]}{suffix}"
 def _content_value(item) -> dict[str, object]: return {"id": item.content_id, "type": item.type_id, "title": item.title, "data": dict(item.data), "state": item.state.value, "visibility": content_visibility(item).value}
 def _media_value(item) -> dict[str, object]: return {"id": item.media_id, "name": str(item.metadata.get("original_name", item.file_name)), "mime_type": item.mime_type, "type": item.media_type.value, "size": item.size, "metadata": dict(item.metadata)}
+def _domain_record_value(item) -> dict[str, object]: return {"id": item.record_id, "values": dict(item.values), "created_at": item.created_at, "updated_at": item.updated_at}
 
 def _extension_value(manager: ExtensionManager, plugins: PluginEngine, identifier: str,
                      active_theme: str | None, package_managed: bool) -> dict[str, object]:

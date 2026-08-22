@@ -1,4 +1,4 @@
-export type AdminSection = "dashboard" | "posts" | "pages" | "media" | "themes" | "menus" | "plugins" | "users" | "roles" | "settings" | "diagnostics";
+export type AdminSection = "dashboard" | "posts" | "pages" | "media" | "themes" | "menus" | "plugins" | "applications" | "users" | "roles" | "settings" | "diagnostics";
 
 export type AdminModule = {
   id: string;
@@ -63,6 +63,9 @@ export type UserItem = { id: string; email: string; display_name: string; state:
 export type RoleItem = { id: string; name: string; built_in: boolean; permissions: string[]; users: number };
 export type PermissionItem = { id: string; owner: string; action: string; resource_type: string; group: string };
 export type RoleAdministration = { roles: RoleItem[]; permissions: PermissionItem[] };
+export type DomainField = { id: string; type: "string" | "text" | "integer" | "decimal" | "boolean" | "enum" | "media" | "relation"; required: boolean; max_length: number | null; choices: string[] };
+export type DomainRecord = { id: string; values: Record<string, unknown>; created_at: string; updated_at: string };
+export type DomainApplication = { owner: string; entity: string; label: string; fields: DomainField[]; records: DomainRecord[] };
 
 export type Operations = {
   version: string;

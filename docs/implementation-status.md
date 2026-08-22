@@ -997,3 +997,23 @@ Status: In progress on the current development branch; release remains `0.1.0`.
 - Built-in roles are inspectable but release-managed: Admin cannot rename them, delete them, or silently narrow their explicit grants. Operators cannot disable their current identity or remove their own `site-owner` membership.
 - New and reset passwords are validated by Authentication on the backend before related User state is created; the Admin minimum is 12 characters.
 - Uploaded Theme HTML/CSS remains presentation-only and rejects executable browser content or external stylesheet loading; uploaded Plugins remain non-executable declarative packages.
+
+## Application and isolated Tool Plugin foundation
+
+Status: Implemented on the current development branch; the release version remains `0.1.0`.
+
+- Added a generic Domain Engine with Plugin-owned schemas, bounded fields, explicit CRUD permissions, durable records, restart preservation, and generated Admin management under **Extensions → Applications**. Domain Plugins never receive Database or Storage access.
+- Added a generic Tool Engine with validated inputs, durable jobs, normalized status/cancellation, and an operator-configured fixed Worker gateway. Plugins cannot select destinations, read Worker credentials, spawn processes, or access network/Configuration directly.
+- Added the Core-owned `[favorite-tool id="..."]` rendering contract and generic Tool job API through the existing Rendering, Routing, API, Authentication, and Permission owners.
+- Extended uploaded declarative Plugin packages with schema-versioned permission, entity, and Tool contributions. Packages remain inactive by default and executable files remain prohibited.
+- Added per-service capability enforcement to Plugin public facades and owner-scoped cleanup for Permission, Domain, and Tool registrations. Durable records, jobs, and approved lifecycle state remain available for safe reactivation.
+- Added two deterministic migrations: `platform.domain.001` and `platform.tool.001`; together with the existing administration migrations, the current authoritative migration count is 16.
+- No OCR, downloader, commerce, payment, email, or production Worker implementation was added. A real Tool Worker remains a separately deployed, authenticated, resource-limited operator responsibility.
+
+Validation:
+
+- Focused Domain/Tool/Plugin/Admin contract tests: 23 passed. Full backend Pytest: 256 passed with the existing Starlette TestClient deprecation warning.
+- ESLint, TypeScript, Python compileall, Next.js production build, distribution regression tests, and `git diff --check` passed.
+- Repository Playwright exercised 14/14 real workflows, including the generated Applications Admin UI; all assertions completed before the known Windows child-process teardown delay.
+- Clean extraction, fresh Python installation, `pip check`, 16 explicit migrations, zero pending migrations, explicit installation, production backend/Theme startup, frozen frontend installation/build/startup, and 31/31 clean-candidate browser assertions passed.
+- Source/package review found no arbitrary uploaded execution, Plugin-selected network destination, private Database/Storage/Configuration access, hidden grant, duplicate Route/API infrastructure, or credential storage. FORMAL SECURITY SCANNER: NOT EXECUTED.

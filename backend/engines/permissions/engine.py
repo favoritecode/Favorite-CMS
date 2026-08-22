@@ -136,6 +136,12 @@ class PermissionEngine:
             raise PermissionError("Permission is already registered")
         self._definitions[definition.permission_id] = definition
 
+    def unregister_owner(self, owner: str) -> None:
+        """Remove active definitions while preserving durable grants for safe reactivation."""
+        self._definitions = {key: value for key, value in self._definitions.items() if value.owner != owner}
+
+    def for_plugin(self, plugin_id: str) -> "PluginPermissions": return PluginPermissions(self, plugin_id)
+
     def grant_role(self, grant: RoleGrant) -> None:
         definition = self._definitions.get(grant.permission_id)
         if definition is None:
@@ -272,3 +278,11 @@ class PermissionEngine:
         if self._database is None:
             raise PermissionError("Permission persistence is unavailable")
         return self._database
+
+
+class PluginPermissions:
+    def __init__(self, engine: PermissionEngine, plugin_id: str) -> None: self._engine = engine; self.plugin_id = plugin_id
+    def register(self, definition: PermissionDefinition) -> None:
+        if definition.owner != self.plugin_id: raise PermissionError("Plugin cannot register another owner's Permission")
+        self._engine.register(definition)
+    def unregister_all(self) -> None: self._engine.unregister_owner(self.plugin_id)

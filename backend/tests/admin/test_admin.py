@@ -71,8 +71,8 @@ class AdminPlugin:
 
 def test_plugin_admin_extension_is_owner_scoped_and_isolated(phase7_kernel: Kernel) -> None:
     manager = phase7_kernel.extensions; identifier = "favorite.plugin.admin"
-    manager.register(ExtensionManifest.from_mapping(manifest_data(id=identifier)))
-    plugins = phase7_kernel.container.resolve("engine.plugins", PluginEngine); runtime = AdminPlugin(); plugins.bind(identifier, runtime)
+    manager.register(ExtensionManifest.from_mapping(manifest_data(id=identifier, permissions=["admin.register"])))
+    plugins = phase7_kernel.container.resolve("engine.plugins", PluginEngine); runtime = AdminPlugin(); plugins.bind(identifier, runtime, granted_permissions=frozenset({"admin.register"}))
     assert plugins.activate(identifier)
     admin = phase7_kernel.container.resolve("application.admin", AdminEngine)
     assert "plugin.admin.page" in admin._modules

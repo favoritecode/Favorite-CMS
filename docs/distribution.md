@@ -119,7 +119,7 @@ Frontend:
 
 ```text
 cd frontend
-pnpm start -- --hostname <internal-host> --port <frontend-port>
+pnpm start --hostname <internal-host> --port <frontend-port>
 ```
 
 A provider-neutral HTTP ingress must preserve these ownership routes:

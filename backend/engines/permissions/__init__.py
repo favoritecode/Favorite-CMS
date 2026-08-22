@@ -5,11 +5,12 @@ from backend.engines.permissions.engine import (
     PermissionDenied,
     PermissionEngine,
     PermissionError,
+    PluginPermissions,
     RoleGrant,
     RoleDefinition,
 )
 
 __all__ = [
     "AuthorizationContext", "PermissionDecision", "PermissionDefinition", "PermissionDenied",
-    "PermissionEngine", "PermissionError", "RoleGrant", "RoleDefinition",
+    "PermissionEngine", "PermissionError", "PluginPermissions", "RoleGrant", "RoleDefinition",
 ]

@@ -52,7 +52,7 @@ Start the backend and frontend:
 
 ```text
 uvicorn backend.main:app --host <internal-host> --port <backend-port>
-pnpm start -- --hostname <internal-host> --port <frontend-port>
+pnpm start --hostname <internal-host> --port <frontend-port>
 ```
 
 Set the server-only `FAVORITE_API_URL` for Next.js. Do not put database URLs, Authentication secrets, or credentials in `NEXT_PUBLIC_*` variables. Normal application startup performs neither migration nor installation.
@@ -60,6 +60,8 @@ Set the server-only `FAVORITE_API_URL` for Next.js. Do not put database URLs, Au
 After both processes are running, open the Next.js Admin login at `http://<frontend-host>:<frontend-port>/admin/login`. Public CMS presentation is served by FastAPI under `/site/*`; the starter homepage is `/site/welcome`. Your reverse proxy may present those paths on one public origin while preserving the documented backend/frontend ownership split.
 
 The bundled Plugins are discovered but inactive by default. Activate them from **Admin → Extensions → Plugins**, review their declared capabilities, and explicitly approve those capabilities before activation. Once explicitly activated, the active state and approved capabilities persist across application and PC restarts. Active Plugin configuration is available both from the Plugin card and **System → Settings**. Website Settings include title, tagline, description, validated public origin, and registered default locale. **Administration → Users** manages identity state and role assignment; **Administration → Roles & permissions** exposes canonical grants grouped by subsystem. The bundled Favorite Starter Theme is activated by installation.
+
+Declarative Application Plugins may register permission-scoped Domain schemas and isolated Tool contracts without receiving Database, Storage, Configuration, filesystem, network, or process access. Authorized Domain records are managed under **Extensions → Applications**. Public Tool forms use `[favorite-tool id="..."]` and delegate execution to one fixed operator-configured Worker gateway; without that separately deployed gateway they remain safely unavailable. See [Application and Tool Plugin foundation](docs/application-plugin-foundation.md).
 
 Authorized operators can install local Theme ZIPs and declarative Plugin ZIPs from the Themes and Plugins pages. Uploads are validated before controlled temporary extraction and persisted through scoped Storage. Installation never activates a package. Uploaded Plugins cannot contain executable Python, JavaScript, native binaries, shell scripts, or package-selected callables; ZIP validation is not represented as a code sandbox. Updates require the same package ID, a newer version, valid compatibility/dependencies, and preserve the previous runtime on failure. Active extensions and the bundled Starter Theme cannot be uninstalled. Media supports bounded JPEG, PNG, WebP, GIF, MP4, WebM, PDF, plain-text/structured-text, DOCX, XLSX, and PPTX uploads through Media Engine → Storage; executable and unknown formats remain rejected. Favorite CMS 0.1.0 still has no marketplace, remote downloader, image transformation pipeline, or arbitrary binary execution.
 

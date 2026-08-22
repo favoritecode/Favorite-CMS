@@ -198,6 +198,9 @@ BOOTSTRAP_SCHEMA = ConfigurationSchema(
         ConfigField("authentication.jwt_secret", str, default="", secret=True),
         ConfigField("authentication.token_lifetime_seconds", int, default=900),
         ConfigField("theme.active", str, default=""),
+        ConfigField("tools.worker_url", str, default=""),
+        ConfigField("tools.worker_token", str, default="", secret=True),
+        ConfigField("tools.timeout_seconds", int, default=15),
     )
 )
 
@@ -220,6 +223,9 @@ def create_bootstrap_configuration() -> Configuration:
             "authentication.jwt_secret": "FAVORITE_AUTH_JWT_SECRET",
             "authentication.token_lifetime_seconds": "FAVORITE_AUTH_TOKEN_LIFETIME_SECONDS",
             "theme.active": "FAVORITE_ACTIVE_THEME",
+            "tools.worker_url": "FAVORITE_TOOL_WORKER_URL",
+            "tools.worker_token": "FAVORITE_TOOL_WORKER_TOKEN",
+            "tools.timeout_seconds": "FAVORITE_TOOL_TIMEOUT_SECONDS",
         }
     )
     return Configuration.resolve(BOOTSTRAP_SCHEMA, (environment,))
